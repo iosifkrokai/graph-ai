@@ -1,8 +1,8 @@
 """Enum exports for the backend domain."""
 
-from backend.enums.execution import ExecutionStatus
-from backend.enums.llm import LLMProviderType
-from backend.enums.node import InputFormat, NodeType, OutputFormat
+from enums.execution import ExecutionStatus
+from enums.llm import LLMProviderType
+from enums.node import InputFormat, NodeType, OutputFormat
 
 __all__ = [
     "ExecutionStatus",

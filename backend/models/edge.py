@@ -1,8 +1,9 @@
 """Edge model."""
 
-from backend.models import BaseWithID
 from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
+
+from models import BaseWithID
 
 
 class Edge(BaseWithID):

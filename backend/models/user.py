@@ -1,8 +1,9 @@
 """User model."""
 
-from backend.models import BaseWithDate, BaseWithID
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
+
+from models import BaseWithDate, BaseWithID
 
 
 class User(BaseWithID, BaseWithDate):

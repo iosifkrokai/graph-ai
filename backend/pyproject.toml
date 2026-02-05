@@ -12,13 +12,17 @@ dependencies = [
     "pydantic==2.12.5",
     "pydantic-settings==2.12.0",
     "httpx==0.28.1",
+    "prefect==3.4.13",
     "python-jose==3.4.0",
-    "passlib==1.7.4"
+    "passlib==1.7.4",
 ]
 
 [dependency-groups]
 dev = [
     "ruff>=0.15.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "testcontainers>=4.0.0",
 ]
 
 [tool.ruff.lint]
@@ -28,3 +32,13 @@ ignore = [
     "D213",   # Conflicts with D212.
     "COM812", # Conflicts with formatter (trailing commas).
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

@@ -1,9 +1,10 @@
 """Node models."""
 
-from backend.enums import InputFormat, NodeType, OutputFormat
-from backend.models import Base, BaseWithID
 from sqlalchemy import Enum, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
+
+from enums import InputFormat, NodeType, OutputFormat
+from models import Base, BaseWithID
 
 
 class Node(BaseWithID):

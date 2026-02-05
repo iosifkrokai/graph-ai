@@ -4,10 +4,11 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from backend.models import Base
-from backend.settings import postgres_settings
 from sqlalchemy.engine.base import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
+
+from models import Base
+from settings import postgres_settings
 
 config = context.config
 

@@ -1,8 +1,9 @@
 """Postgres settings."""
 
-from backend.settings.base import BaseSettings
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
+
+from settings.base import BaseSettings
 
 
 class PostgresSettings(BaseSettings):

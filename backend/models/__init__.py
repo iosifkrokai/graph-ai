@@ -1,12 +1,12 @@
 """Model exports for the backend."""
 
-from backend.models.base import Base, BaseWithDate, BaseWithID
-from backend.models.edge import Edge
-from backend.models.execution import Execution
-from backend.models.llm_provider import LLMProvider
-from backend.models.node import InputNode, LLMNode, Node, OutputNode
-from backend.models.user import User
-from backend.models.workflow import Workflow
+from models.base import Base, BaseWithDate, BaseWithID
+from models.edge import Edge
+from models.execution import Execution
+from models.llm_provider import LLMProvider
+from models.node import InputNode, LLMNode, Node, OutputNode
+from models.user import User
+from models.workflow import Workflow
 
 __all__ = [
     "Base",

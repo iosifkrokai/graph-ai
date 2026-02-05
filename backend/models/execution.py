@@ -2,11 +2,12 @@
 
 from datetime import datetime
 
-from backend.enums import ExecutionStatus
-from backend.models import BaseWithID
 from sqlalchemy import Enum, ForeignKey, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+
+from enums import ExecutionStatus
+from models import BaseWithID
 
 
 class Execution(BaseWithID):

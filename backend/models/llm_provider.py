@@ -1,9 +1,10 @@
 """LLM provider model."""
 
-from backend.enums import LLMProviderType
-from backend.models import BaseWithID
 from sqlalchemy import Boolean, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
+
+from enums import LLMProviderType
+from models import BaseWithID
 
 
 class LLMProvider(BaseWithID):

@@ -1,8 +1,9 @@
 """Workflow model."""
 
-from backend.models import BaseWithDate, BaseWithID
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
+
+from models import BaseWithDate, BaseWithID
 
 
 class Workflow(BaseWithID, BaseWithDate):

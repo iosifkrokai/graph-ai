@@ -3,10 +3,10 @@ SHELL := /bin/bash
 .PHONY: check format migrate
 
 check:
-	ruff check .
+	uv run ruff check --force-exclude --fix --exit-non-zero-on-fix
 
 format:
-	ruff format .
+	uv run ruff format --force-exclude --exit-non-zero-on-format
 
 migrate:
 	@set -euo pipefail; \
@@ -15,4 +15,4 @@ migrate:
 	cp .env.example .env; \
 	sed -i 's/^POSTGRES_HOST=.*/POSTGRES_HOST=localhost/' .env; \
 	trap 'if [ -f $$backup ]; then cp $$backup .env; rm -f $$backup; fi' EXIT; \
-	alembic revision --autogenerate -m "$${MSG:-autogen}"
+	cd ./backend && alembic revision --autogenerate -m "$${MSG:-autogen}"
