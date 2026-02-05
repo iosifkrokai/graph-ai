@@ -1,6 +1,7 @@
 """API router package."""
 
 from routers import (
+    auth,
     edge,
     execution,
     health,
@@ -14,6 +15,7 @@ from routers import (
 )
 
 __all__ = [
+    "auth",
     "edge",
     "execution",
     "health",
@@ -25,4 +27,3 @@ __all__ = [
     "user",
     "workflow",
 ]
-"""API router package."""

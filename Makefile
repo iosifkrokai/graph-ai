@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: check format migrate
+.PHONY: check format migrate run
 
 check:
 	uv run ruff check --force-exclude --fix --exit-non-zero-on-fix
@@ -16,3 +16,7 @@ migrate:
 	sed -i 's/^POSTGRES_HOST=.*/POSTGRES_HOST=localhost/' .env; \
 	trap 'if [ -f $$backup ]; then cp $$backup .env; rm -f $$backup; fi' EXIT; \
 	cd ./backend && alembic revision --autogenerate -m "$${MSG:-autogen}"
+
+run:
+	cp .env.example .env
+	docker compose up --build

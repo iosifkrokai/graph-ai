@@ -1,5 +1,6 @@
 """Pydantic schemas for API inputs and outputs."""
 
+from schemas.auth import Login, Token
 from schemas.edge import EdgeCreate, EdgeResponse, EdgeUpdate
 from schemas.execution import ExecutionCreate, ExecutionResponse, ExecutionUpdate
 from schemas.health import HealthResponse, ServiceHealthResponse
@@ -22,7 +23,7 @@ from schemas.node import (
     OutputNodeResponse,
     OutputNodeUpdate,
 )
-from schemas.user import UserCreate, UserResponse, UserUpdate
+from schemas.user import UserCreate, UserResponse
 from schemas.workflow import WorkflowCreate, WorkflowResponse, WorkflowUpdate
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "LLMProviderCreate",
     "LLMProviderResponse",
     "LLMProviderUpdate",
+    "Login",
     "NodeCreate",
     "NodeResponse",
     "NodeUpdate",
@@ -49,7 +51,10 @@ __all__ = [
     "OutputNodeResponse",
     "OutputNodeUpdate",
     "ServiceHealthResponse",
+    "Token",
     "UserCreate",
+    "UserCreate",
+    "UserResponse",
     "UserResponse",
     "UserUpdate",
     "WorkflowCreate",

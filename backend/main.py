@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from exceptions import BaseError
 from routers import (
+    auth,
     edge,
     execution,
     health,
@@ -30,6 +31,7 @@ async def handle_base_error(_: Request, exc: BaseError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
 
+app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(user.router)
 app.include_router(workflow.router)

@@ -1,30 +1,31 @@
-"""Schemas for user API payloads."""
+"""User-related API schemas."""
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
-class UserCreate(BaseModel):
+class UserBase(BaseModel):
+    """Shared user fields."""
+
+    email: EmailStr = Field(default=..., description="Email of the user")
+
+
+class UserCreate(UserBase):
     """Payload for creating a user."""
 
-    email: str = Field(default=..., description="Email address")
-    password: str = Field(default=..., description="Plaintext password")
+    password: str = Field(default=..., description="Password of the user")
 
 
-class UserUpdate(BaseModel):
-    """Payload for updating a user."""
+class UserResponse(UserBase):
+    """User response schema."""
 
-    email: str | None = Field(default=None, description="Email address")
-    password: str | None = Field(default=None, description="Plaintext password")
+    id: int = Field(default=..., description="ID of the user", gt=0)
 
-
-class UserResponse(BaseModel):
-    """Response model for users."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int = Field(default=..., description="User ID", gt=0)
-    email: str = Field(default=..., description="Email address")
     created_at: datetime = Field(default=..., description="Created at")
     updated_at: datetime = Field(default=..., description="Updated at")
+
+    class Config:
+        """Pydantic config."""
+
+        from_attributes = True

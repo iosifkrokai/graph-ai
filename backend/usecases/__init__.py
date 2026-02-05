@@ -1,5 +1,6 @@
 """Usecase package for business logic."""
 
+from usecases.auth import AuthUsecase
 from usecases.edge import EdgeUsecase
 from usecases.execution import ExecutionUsecase
 from usecases.health import HealthUsecase
@@ -12,6 +13,7 @@ from usecases.user import UserUsecase
 from usecases.workflow import WorkflowUsecase
 
 __all__ = [
+    "AuthUsecase",
     "EdgeUsecase",
     "ExecutionUsecase",
     "HealthUsecase",
