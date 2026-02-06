@@ -12,10 +12,10 @@ class LLMProviderUsecase:
 
     def __init__(self) -> None:
         """Initialize the usecase."""
-        self._provider_repository = LLMProviderRepository()
+        self._llm_provider_repository = LLMProviderRepository()
         self._user_repository = UserRepository()
 
-    async def create_provider(
+    async def create_llm_provider(
         self,
         session: AsyncSession,
         user_id: int,
@@ -35,12 +35,12 @@ class LLMProviderUsecase:
             UserNotFoundError: If the owner user is not found.
 
         """
-        return await self._provider_repository.create(
+        return await self._llm_provider_repository.create(
             session=session,
             data={**kwargs, "user_id": user_id},
         )
 
-    async def get_providers(
+    async def get_llm_providers(
         self, session: AsyncSession, user_id: int
     ) -> list[LLMProvider]:
         """List LLM providers for a user.
@@ -53,9 +53,11 @@ class LLMProviderUsecase:
             The list of LLM providers.
 
         """
-        return await self._provider_repository.get_all(session=session, user_id=user_id)
+        return await self._llm_provider_repository.get_all(
+            session=session, user_id=user_id
+        )
 
-    async def get_provider(
+    async def get_llm_provider(
         self, session: AsyncSession, provider_id: int, user_id: int
     ) -> LLMProvider:
         """Fetch an LLM provider by ID.
@@ -72,7 +74,7 @@ class LLMProviderUsecase:
             LLMProviderNotFoundError: If the LLM provider is not found.
 
         """
-        provider = await self._provider_repository.get_by(
+        provider = await self._llm_provider_repository.get_by(
             session=session, id=provider_id, user_id=user_id
         )
         if not provider:
@@ -80,7 +82,7 @@ class LLMProviderUsecase:
 
         return provider
 
-    async def update_provider(
+    async def update_llm_provider(
         self, session: AsyncSession, provider_id: int, user_id: int, **kwargs: object
     ) -> LLMProvider:
         """Update an LLM provider by ID.
@@ -98,7 +100,7 @@ class LLMProviderUsecase:
             LLMProviderNotFoundError: If the LLM provider is not found.
 
         """
-        provider = await self.get_provider(
+        provider = await self.get_llm_provider(
             session=session, provider_id=provider_id, user_id=user_id
         )
 
@@ -106,7 +108,7 @@ class LLMProviderUsecase:
         if not update_data:
             return provider
 
-        provider = await self._provider_repository.update_by(
+        provider = await self._llm_provider_repository.update_by(
             session=session, data=update_data, id=provider_id
         )
         if not provider:
@@ -114,7 +116,7 @@ class LLMProviderUsecase:
 
         return provider
 
-    async def delete_provider(
+    async def delete_llm_provider(
         self, session: AsyncSession, provider_id: int, user_id: int
     ) -> None:
         """Delete an LLM provider by ID.
@@ -128,7 +130,7 @@ class LLMProviderUsecase:
             LLMProviderNotFoundError: If the LLM provider is not found.
 
         """
-        deleted = await self._provider_repository.delete_by(
+        deleted = await self._llm_provider_repository.delete_by(
             session=session, id=provider_id, user_id=user_id
         )
         if not deleted:

@@ -29,6 +29,6 @@ async def delete_user(
     """Delete the current user."""
     await usecase.delete_user(session=session, user_id=current_user.id)
     return JSONResponse(
-        content={"detail": "User deleted successfully"},
         status_code=status.HTTP_202_ACCEPTED,
+        content={"detail": "User deleted successfully"},
     )

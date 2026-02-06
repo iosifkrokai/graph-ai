@@ -1,7 +1,5 @@
 """Execution API tests."""
 
-from http import HTTPStatus
-
 import pytest
 
 from enums import ExecutionStatus
@@ -92,66 +90,3 @@ class TestExecutionGet(BaseTestCase):
         data = await self.assert_response_dict(response=response)
         if data["id"] != execution.id:
             pytest.fail("Execution id did not match")
-
-
-class TestExecutionUpdate(BaseTestCase):
-    """Tests for PATCH /executions/{execution_id}."""
-
-    url = "/executions"
-
-    @pytest.mark.asyncio
-    async def test_ok(self) -> None:
-        """Successful update returns updated execution data."""
-        user, headers = await self.create_user_and_get_token()
-        workflow = await WorkflowFactory.create_async(
-            session=self.session, owner_id=user["id"]
-        )
-        execution = await ExecutionFactory.create_async(
-            session=self.session, workflow_id=workflow.id
-        )
-
-        response = await self.client.patch(
-            url=f"{self.url}/{execution.id}",
-            json={
-                "status": ExecutionStatus.SUCCESS,
-                "output_data": {"result": "ok"},
-            },
-            headers=headers,
-        )
-
-        data = await self.assert_response_dict(response=response)
-        if data["status"] != ExecutionStatus.SUCCESS:
-            pytest.fail("Execution status was not updated")
-        if data.get("finished_at") is None:
-            pytest.fail("Expected finished_at to be set on success")
-
-
-class TestExecutionDelete(BaseTestCase):
-    """Tests for DELETE /executions/{execution_id}."""
-
-    url = "/executions"
-
-    @pytest.mark.asyncio
-    async def test_ok(self) -> None:
-        """Successful delete removes the execution."""
-        user, headers = await self.create_user_and_get_token()
-        workflow = await WorkflowFactory.create_async(
-            session=self.session, owner_id=user["id"]
-        )
-        execution = await ExecutionFactory.create_async(
-            session=self.session, workflow_id=workflow.id
-        )
-
-        response = await self.client.delete(
-            url=f"{self.url}/{execution.id}",
-            headers=headers,
-        )
-
-        await self.assert_response_ok(response=response)
-
-        fetch = await self.client.get(
-            url=f"{self.url}/{execution.id}",
-            headers=headers,
-        )
-        if fetch.status_code != HTTPStatus.NOT_FOUND:
-            pytest.fail("Expected deleted execution to return 404")

@@ -1,10 +1,7 @@
 """Execution use case implementation."""
 
-from datetime import UTC, datetime
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from enums import ExecutionStatus
 from exceptions import ExecutionNotFoundError, WorkflowNotFoundError
 from models import Execution
 from repositories import ExecutionRepository, WorkflowRepository
@@ -24,7 +21,6 @@ class ExecutionUsecase:
         user_id: int,
         workflow_id: int,
         input_data: dict | None = None,
-        status: ExecutionStatus | None = None,
     ) -> Execution:
         """Create an execution for a workflow.
 
@@ -33,7 +29,6 @@ class ExecutionUsecase:
             user_id: The owner user ID.
             workflow_id: The workflow ID.
             input_data: The execution input data.
-            status: The execution status.
 
         Returns:
             The created execution.
@@ -48,16 +43,12 @@ class ExecutionUsecase:
         if not workflow:
             raise WorkflowNotFoundError
 
-        payload: dict[str, object] = {
-            "workflow_id": workflow_id,
-            "input_data": input_data,
-        }
-        if status is not None:
-            payload["status"] = status
-
         return await self._execution_repository.create(
             session=session,
-            data=payload,
+            data={
+                "workflow_id": workflow_id,
+                "input_data": input_data,
+            },
         )
 
     async def get_executions(
@@ -118,68 +109,3 @@ class ExecutionUsecase:
             raise WorkflowNotFoundError
 
         return execution
-
-    async def update_execution(
-        self, session: AsyncSession, execution_id: int, user_id: int, **kwargs: object
-    ) -> Execution:
-        """Update an execution by ID.
-
-        Args:
-            session: The session.
-            execution_id: The execution ID.
-            user_id: The owner user ID.
-            **kwargs: The fields to update.
-
-        Returns:
-            The updated execution.
-
-        Raises:
-            ExecutionNotFoundError: If the execution is not found.
-
-        """
-        execution = await self.get_execution(
-            session=session, execution_id=execution_id, user_id=user_id
-        )
-
-        update_data = {k: v for k, v in kwargs.items() if v is not None}
-        if not update_data:
-            return execution
-
-        status = update_data.get("status")
-        if status in {ExecutionStatus.SUCCESS, ExecutionStatus.FAILED}:
-            finished_at = datetime.now(tz=UTC).replace(tzinfo=None)
-            update_data.setdefault("finished_at", finished_at)
-
-        execution = await self._execution_repository.update_by(
-            session=session,
-            data=update_data,
-            id=execution_id,
-        )
-        if not execution:
-            raise ExecutionNotFoundError
-
-        return execution
-
-    async def delete_execution(
-        self, session: AsyncSession, execution_id: int, user_id: int
-    ) -> None:
-        """Delete an execution by ID.
-
-        Args:
-            session: The session.
-            execution_id: The execution ID.
-            user_id: The owner user ID.
-
-        Raises:
-            ExecutionNotFoundError: If the execution is not found.
-
-        """
-        await self.get_execution(
-            session=session, execution_id=execution_id, user_id=user_id
-        )
-
-        deleted = await self._execution_repository.delete_by(
-            session=session, id=execution_id
-        )
-        if not deleted:
-            raise ExecutionNotFoundError

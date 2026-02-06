@@ -18,7 +18,7 @@ router = APIRouter(prefix="/llm-providers", tags=["LLM Providers"])
 
 
 @router.post(path="")
-async def create_provider(
+async def create_llm_provider(
     data: Annotated[
         LLMProviderCreate, Body(description="Data for creating an LLM provider")
     ],
@@ -31,14 +31,14 @@ async def create_provider(
 ) -> LLMProviderResponse:
     """Create a new LLM provider."""
     return LLMProviderResponse.model_validate(
-        await usecase.create_provider(
+        await usecase.create_llm_provider(
             session=session, user_id=current_user.id, **data.model_dump()
         )
     )
 
 
 @router.get(path="")
-async def list_providers(
+async def list_llm_providers(
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
     usecase: Annotated[
         llm_provider.LLMProviderUsecase,
@@ -49,14 +49,14 @@ async def list_providers(
     """List LLM providers for the current user."""
     return [
         LLMProviderResponse.model_validate(provider)
-        for provider in await usecase.get_providers(
+        for provider in await usecase.get_llm_providers(
             session=session, user_id=current_user.id
         )
     ]
 
 
 @router.get(path="/{provider_id}")
-async def get_provider(
+async def get_llm_provider(
     provider_id: Annotated[int, Path(description="LLM provider ID", gt=0)],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
     usecase: Annotated[
@@ -67,14 +67,14 @@ async def get_provider(
 ) -> LLMProviderResponse:
     """Fetch an LLM provider by ID."""
     return LLMProviderResponse.model_validate(
-        await usecase.get_provider(
+        await usecase.get_llm_provider(
             session=session, provider_id=provider_id, user_id=current_user.id
         )
     )
 
 
 @router.patch(path="/{provider_id}")
-async def update_provider(
+async def update_llm_provider(
     provider_id: Annotated[int, Path(description="LLM provider ID", gt=0)],
     data: Annotated[
         LLMProviderUpdate, Body(description="Data for updating an LLM provider")
@@ -88,7 +88,7 @@ async def update_provider(
 ) -> LLMProviderResponse:
     """Update an LLM provider by ID."""
     return LLMProviderResponse.model_validate(
-        await usecase.update_provider(
+        await usecase.update_llm_provider(
             session=session,
             provider_id=provider_id,
             user_id=current_user.id,
@@ -98,7 +98,7 @@ async def update_provider(
 
 
 @router.delete(path="/{provider_id}")
-async def delete_provider(
+async def delete_llm_provider(
     provider_id: Annotated[int, Path(description="LLM provider ID", gt=0)],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
     usecase: Annotated[
@@ -108,7 +108,7 @@ async def delete_provider(
     current_user: Annotated[UserResponse, Depends(dependency=auth.get_current_user)],
 ) -> JSONResponse:
     """Delete an LLM provider by ID."""
-    await usecase.delete_provider(
+    await usecase.delete_llm_provider(
         session=session, provider_id=provider_id, user_id=current_user.id
     )
     return JSONResponse(
