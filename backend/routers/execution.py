@@ -13,7 +13,7 @@ from schemas import ExecutionCreate, ExecutionResponse, ExecutionUpdate
 router = APIRouter(prefix="/executions", tags=["Executions"])
 
 
-@router.post(path="", status_code=status.HTTP_201_CREATED)
+@router.post(path="")
 async def create_execution(
     data: Annotated[
         ExecutionCreate, Body(description="Data for creating an execution")
@@ -85,7 +85,7 @@ async def update_execution(
     )
 
 
-@router.delete(path="/{execution_id}", status_code=status.HTTP_202_ACCEPTED)
+@router.delete(path="/{execution_id}")
 async def delete_execution(
     execution_id: Annotated[int, Path(description="Execution ID", gt=0)],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
@@ -96,4 +96,6 @@ async def delete_execution(
 ) -> JSONResponse:
     """Delete an execution by ID."""
     await usecase.delete_execution(session=session, execution_id=execution_id)
-    return JSONResponse(content={"detail": "Execution deleted"})
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED, content={"detail": "Execution deleted"}
+    )

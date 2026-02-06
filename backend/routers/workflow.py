@@ -13,7 +13,7 @@ from schemas import WorkflowCreate, WorkflowResponse, WorkflowUpdate
 router = APIRouter(prefix="/workflows", tags=["Workflows"])
 
 
-@router.post(path="", status_code=status.HTTP_201_CREATED)
+@router.post(path="")
 async def create_workflow(
     data: Annotated[WorkflowCreate, Body(description="Data for creating a workflow")],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
@@ -77,7 +77,7 @@ async def update_workflow(
     )
 
 
-@router.delete(path="/{workflow_id}", status_code=status.HTTP_202_ACCEPTED)
+@router.delete(path="/{workflow_id}")
 async def delete_workflow(
     workflow_id: Annotated[int, Path(description="Workflow ID", gt=0)],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
@@ -88,4 +88,6 @@ async def delete_workflow(
 ) -> JSONResponse:
     """Delete a workflow by ID."""
     await usecase.delete_workflow(session=session, workflow_id=workflow_id)
-    return JSONResponse(content={"detail": "Workflow deleted"})
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED, content={"detail": "Workflow deleted"}
+    )

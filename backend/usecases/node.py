@@ -1,10 +1,7 @@
 """Node use case implementation."""
 
-from typing import Any
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from enums import NodeType
 from exceptions import NodeNotFoundError, WorkflowNotFoundError
 from models import Node
 from repositories import NodeRepository, WorkflowRepository
@@ -18,24 +15,16 @@ class NodeUsecase:
         self._node_repository = NodeRepository()
         self._workflow_repository = WorkflowRepository()
 
-    async def create_node(  # noqa: PLR0913
+    async def create_node(
         self,
         session: AsyncSession,
-        workflow_id: int,
-        type: NodeType,  # noqa: A002
-        data: dict[str, Any] | None = None,
-        position_x: float = 0.0,
-        position_y: float = 0.0,
+        **kwargs: object,
     ) -> Node:
         """Create a node within a workflow.
 
         Args:
             session: The session.
-            workflow_id: The workflow ID.
-            type: The node type.
-            data: The node configuration data.
-            position_x: The X position on canvas.
-            position_y: The Y position on canvas.
+            **kwargs: The node creation fields.
 
         Returns:
             The created node.
@@ -45,20 +34,14 @@ class NodeUsecase:
 
         """
         workflow = await self._workflow_repository.get_by(
-            session=session, id=workflow_id
+            session=session, id=kwargs["workflow_id"]
         )
         if not workflow:
             raise WorkflowNotFoundError
 
         return await self._node_repository.create(
             session=session,
-            data={
-                "workflow_id": workflow_id,
-                "type": type,
-                "data": data or {},
-                "position_x": position_x,
-                "position_y": position_y,
-            },
+            data=kwargs,
         )
 
     async def get_nodes(

@@ -4,7 +4,7 @@ import asyncio
 from http import HTTPStatus
 
 import httpx
-import redis.asyncio
+import redis.asyncio as redis
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 

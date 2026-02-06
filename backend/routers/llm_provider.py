@@ -13,7 +13,7 @@ from schemas import LLMProviderCreate, LLMProviderResponse, LLMProviderUpdate
 router = APIRouter(prefix="/llm-providers", tags=["LLM Providers"])
 
 
-@router.post(path="", status_code=status.HTTP_201_CREATED)
+@router.post(path="")
 async def create_provider(
     data: Annotated[
         LLMProviderCreate, Body(description="Data for creating an LLM provider")
@@ -81,7 +81,7 @@ async def update_provider(
     )
 
 
-@router.delete(path="/{provider_id}", status_code=status.HTTP_202_ACCEPTED)
+@router.delete(path="/{provider_id}")
 async def delete_provider(
     provider_id: Annotated[int, Path(description="LLM provider ID", gt=0)],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
@@ -92,4 +92,6 @@ async def delete_provider(
 ) -> JSONResponse:
     """Delete an LLM provider by ID."""
     await usecase.delete_provider(session=session, provider_id=provider_id)
-    return JSONResponse(content={"detail": "LLM provider deleted"})
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED, content={"detail": "LLM provider deleted"}
+    )

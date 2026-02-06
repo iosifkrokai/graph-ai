@@ -148,7 +148,7 @@ class AuthUsecase:
 
         user = await self._user_repository.get_by(session=session, email=email)
 
-        if not user or not user.is_active:
+        if not user:
             raise AuthCredentialsError
 
         return user

@@ -13,7 +13,7 @@ from schemas import NodeCreate, NodeResponse, NodeUpdate
 router = APIRouter(prefix="/nodes", tags=["Nodes"])
 
 
-@router.post(path="", status_code=status.HTTP_201_CREATED)
+@router.post(path="")
 async def create_node(
     data: Annotated[NodeCreate, Body(description="Data for creating a node")],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
@@ -75,7 +75,7 @@ async def update_node(
     )
 
 
-@router.delete(path="/{node_id}", status_code=status.HTTP_202_ACCEPTED)
+@router.delete(path="/{node_id}")
 async def delete_node(
     node_id: Annotated[int, Path(description="Node ID", gt=0)],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
@@ -86,4 +86,6 @@ async def delete_node(
 ) -> JSONResponse:
     """Delete a node by ID."""
     await usecase.delete_node(session=session, node_id=node_id)
-    return JSONResponse(content={"detail": "Node deleted"})
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED, content={"detail": "Node deleted"}
+    )

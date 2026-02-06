@@ -2,7 +2,6 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from enums import LLMProviderType
 from exceptions import LLMProviderNotFoundError, UserNotFoundError
 from models import LLMProvider
 from repositories import LLMProviderRepository, UserRepository
@@ -16,26 +15,16 @@ class LLMProviderUsecase:
         self._provider_repository = LLMProviderRepository()
         self._user_repository = UserRepository()
 
-    async def create_provider(  # noqa: PLR0913
+    async def create_provider(
         self,
         session: AsyncSession,
-        user_id: int,
-        name: str,
-        type: LLMProviderType,  # noqa: A002
-        api_key: str,
-        base_url: str | None = None,
-        is_default: bool = False,  # noqa: FBT001, FBT002
+        **kwargs: object,
     ) -> LLMProvider:
         """Create a new LLM provider.
 
         Args:
             session: The session.
-            user_id: The owner user ID.
-            name: The provider name.
-            type: The provider type.
-            api_key: The encrypted API key.
-            base_url: The custom base URL.
-            is_default: Whether this is the default provider.
+            **kwargs: The provider creation fields.
 
         Returns:
             The created LLM provider.
@@ -44,20 +33,13 @@ class LLMProviderUsecase:
             UserNotFoundError: If the owner user is not found.
 
         """
-        user = await self._user_repository.get_by(session=session, id=user_id)
+        user = await self._user_repository.get_by(session=session, id=kwargs["user_id"])
         if not user:
             raise UserNotFoundError
 
         return await self._provider_repository.create(
             session=session,
-            data={
-                "user_id": user_id,
-                "name": name,
-                "type": type,
-                "api_key": api_key,
-                "base_url": base_url,
-                "is_default": is_default,
-            },
+            data=kwargs,
         )
 
     async def get_providers(

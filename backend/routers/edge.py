@@ -13,7 +13,7 @@ from schemas import EdgeCreate, EdgeResponse, EdgeUpdate
 router = APIRouter(prefix="/edges", tags=["Edges"])
 
 
-@router.post(path="", status_code=status.HTTP_201_CREATED)
+@router.post(path="")
 async def create_edge(
     data: Annotated[EdgeCreate, Body(description="Data for creating an edge")],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
@@ -75,7 +75,7 @@ async def update_edge(
     )
 
 
-@router.delete(path="/{edge_id}", status_code=status.HTTP_202_ACCEPTED)
+@router.delete(path="/{edge_id}")
 async def delete_edge(
     edge_id: Annotated[int, Path(description="Edge ID", gt=0)],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
@@ -86,4 +86,6 @@ async def delete_edge(
 ) -> JSONResponse:
     """Delete an edge by ID."""
     await usecase.delete_edge(session=session, edge_id=edge_id)
-    return JSONResponse(content={"detail": "Edge deleted"})
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED, content={"detail": "Edge deleted"}
+    )
