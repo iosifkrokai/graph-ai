@@ -35,8 +35,6 @@ ignore = [
     "D203",   # Conflicts with D211.
     "D213",   # Conflicts with D212.
     "COM812", # Conflicts with formatter (trailing commas).
-    "S101",   # assert is the standard way to write test assertions.
-    "S107",   # Hardcoded test passwords are intentional.
 ]
 
 [tool.pytest.ini_options]

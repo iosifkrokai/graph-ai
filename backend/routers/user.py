@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies import auth, db, user
 from schemas import UserResponse
 
-router = APIRouter(prefix="/user", tags=["User"])
+router = APIRouter(prefix="/users", tags=["Users"])
 
 
 @router.get(path="/me")

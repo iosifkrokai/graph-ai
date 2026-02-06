@@ -150,7 +150,8 @@ class ExecutionUsecase:
         )
         status = update_data.get("status")
         if status in {ExecutionStatus.SUCCESS, ExecutionStatus.FAILED}:
-            update_data.setdefault("finished_at", datetime.now(tz=UTC))
+            finished_at = datetime.now(tz=UTC).replace(tzinfo=None)
+            update_data.setdefault("finished_at", finished_at)
 
         execution = await self._execution_repository.update_by(
             session=session,

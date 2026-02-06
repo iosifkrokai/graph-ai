@@ -1,5 +1,6 @@
 """Auth API tests."""
 
+import secrets
 import uuid
 
 import pytest
@@ -15,25 +16,26 @@ class TestAuthRegister(BaseTestCase):
 
     url = "/auth/register"
 
-    def _user_data(self) -> dict:
-        return {
-            "email": f"john.doe-{uuid.uuid4().hex[:8]}@example.com",
-            "password": "secure_password123",
-        }
-
     @pytest.mark.asyncio
     async def test_ok(self) -> None:
         """Successful registration returns user data."""
-        user_data = self._user_data()
+        payload = {
+            "email": f"john.doe-{uuid.uuid4().hex[:8]}@example.com",
+            "password": secrets.token_urlsafe(16),
+        }
 
-        response = await self.client.post(url=self.url, json=user_data)
+        response = await self.client.post(url=self.url, json=payload)
 
         data = await self.assert_response_ok(response=response)
-        assert "id" in data
-        assert data["email"] == user_data["email"]
-        assert "created_at" in data
-        assert "hashed_password" not in data
-        assert "password" not in data
+        if not isinstance(data, dict):
+            pytest.fail("Expected user response to be an object")
+        self.assert_has_keys(data, {"id", "email", "created_at", "updated_at"})
+        if data["email"] != payload["email"]:
+            pytest.fail("Response email did not match request")
+        if "hashed_password" in data:
+            pytest.fail("Response must not include 'hashed_password'")
+        if "password" in data:
+            pytest.fail("Response must not include 'password'")
 
 
 class TestAuthLogin(BaseTestCase):
@@ -41,16 +43,13 @@ class TestAuthLogin(BaseTestCase):
 
     url = "/auth/login"
 
-    def _user_data(self) -> dict:
-        return {
-            "email": f"john.doe-{uuid.uuid4().hex[:8]}@example.com",
-            "password": "secure_password123",
-        }
-
     @pytest.mark.asyncio
     async def test_ok(self) -> None:
         """Successful login returns access token."""
-        user_data = self._user_data()
+        user_data = {
+            "email": f"john.doe-{uuid.uuid4().hex[:8]}@example.com",
+            "password": secrets.token_urlsafe(16),
+        }
         await UserFactory.create_async(
             session=self.session,
             email=user_data["email"],
@@ -63,6 +62,8 @@ class TestAuthLogin(BaseTestCase):
         )
 
         data = await self.assert_response_ok(response=response)
-        assert "access_token" in data
-        assert "token_type" in data
-        assert data["token_type"] == auth_settings.token_type
+        if not isinstance(data, dict):
+            pytest.fail("Expected token response to be an object")
+        self.assert_has_keys(data, {"access_token", "token_type"})
+        if data["token_type"] != auth_settings.token_type:
+            pytest.fail("Token type did not match expected value")
