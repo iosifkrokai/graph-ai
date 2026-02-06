@@ -18,12 +18,14 @@ class LLMProviderUsecase:
     async def create_provider(
         self,
         session: AsyncSession,
+        user_id: int,
         **kwargs: object,
     ) -> LLMProvider:
         """Create a new LLM provider.
 
         Args:
             session: The session.
+            user_id: The owner user ID.
             **kwargs: The provider creation fields.
 
         Returns:
@@ -33,19 +35,20 @@ class LLMProviderUsecase:
             UserNotFoundError: If the owner user is not found.
 
         """
-        user = await self._user_repository.get_by(session=session, id=kwargs["user_id"])
+        user = await self._user_repository.get_by(session=session, id=user_id)
         if not user:
             raise UserNotFoundError
 
+        kwargs["user_id"] = user_id
         return await self._provider_repository.create(
             session=session,
             data=kwargs,
         )
 
     async def get_providers(
-        self, session: AsyncSession, user_id: int | None = None
+        self, session: AsyncSession, user_id: int
     ) -> list[LLMProvider]:
-        """List LLM providers, optionally filtered by user.
+        """List LLM providers for a user.
 
         Args:
             session: The session.
@@ -55,17 +58,17 @@ class LLMProviderUsecase:
             The list of LLM providers.
 
         """
-        filters = {"user_id": user_id} if user_id else {}
-        return await self._provider_repository.get_all(session=session, **filters)
+        return await self._provider_repository.get_all(session=session, user_id=user_id)
 
     async def get_provider(
-        self, session: AsyncSession, provider_id: int
+        self, session: AsyncSession, provider_id: int, user_id: int
     ) -> LLMProvider:
         """Fetch an LLM provider by ID.
 
         Args:
             session: The session.
             provider_id: The provider ID.
+            user_id: The owner user ID.
 
         Returns:
             The LLM provider.
@@ -75,20 +78,21 @@ class LLMProviderUsecase:
 
         """
         provider = await self._provider_repository.get_by(
-            session=session, id=provider_id
+            session=session, id=provider_id, user_id=user_id
         )
         if not provider:
             raise LLMProviderNotFoundError
         return provider
 
     async def update_provider(
-        self, session: AsyncSession, provider_id: int, **kwargs: object
+        self, session: AsyncSession, provider_id: int, user_id: int, **kwargs: object
     ) -> LLMProvider:
         """Update an LLM provider by ID.
 
         Args:
             session: The session.
             provider_id: The provider ID.
+            user_id: The owner user ID.
             **kwargs: The fields to update.
 
         Returns:
@@ -100,30 +104,36 @@ class LLMProviderUsecase:
         """
         update_data = {k: v for k, v in kwargs.items() if v is not None}
         if not update_data:
-            return await self.get_provider(session=session, provider_id=provider_id)
+            return await self.get_provider(
+                session=session, provider_id=provider_id, user_id=user_id
+            )
 
         provider = await self._provider_repository.update_by(
             session=session,
             data=update_data,
             id=provider_id,
+            user_id=user_id,
         )
         if not provider:
             raise LLMProviderNotFoundError
         return provider
 
-    async def delete_provider(self, session: AsyncSession, provider_id: int) -> None:
+    async def delete_provider(
+        self, session: AsyncSession, provider_id: int, user_id: int
+    ) -> None:
         """Delete an LLM provider by ID.
 
         Args:
             session: The session.
             provider_id: The provider ID.
+            user_id: The owner user ID.
 
         Raises:
             LLMProviderNotFoundError: If the LLM provider is not found.
 
         """
         deleted = await self._provider_repository.delete_by(
-            session=session, id=provider_id
+            session=session, id=provider_id, user_id=user_id
         )
         if not deleted:
             raise LLMProviderNotFoundError
