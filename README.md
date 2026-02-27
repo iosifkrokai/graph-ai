@@ -32,7 +32,6 @@ This copies `.env.example` → `.env` and runs `docker compose up --build`.
 | -------- | -------------------------- |
 | Frontend | http://localhost:3000       |
 | Swagger  | http://localhost:5000/docs  |
-| Prefect  | http://localhost:4200       |
 
 ## Local Development
 
@@ -58,8 +57,3 @@ make front-typecheck        # Type check (tsc)
 make front-build            # Production build (vite)
 ```
 
-## Tech Stack
-
-**Backend** — FastAPI · SQLAlchemy · PostgreSQL · ChromaDB · Prefect · Ollama
-
-**Frontend** — React 19 · Vite 7 · TypeScript · Tailwind CSS 4 · React Flow
