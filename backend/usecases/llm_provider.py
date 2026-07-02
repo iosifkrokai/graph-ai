@@ -12,6 +12,7 @@ from schemas import (
     LLMProviderResponse,
     LLMProviderUpdate,
 )
+from utils.encryption import encrypt
 
 
 class LLMProviderUsecase:
@@ -38,10 +39,14 @@ class LLMProviderUsecase:
             The created LLM provider.
 
         """
+        payload = data.model_dump(mode="json")
+        if payload.get("api_key") is not None:
+            payload["api_key"] = encrypt(payload["api_key"])
+
         return LLMProviderResponse.model_validate(
             await self._llm_provider_repository.create(
                 session=session,
-                data={**data.model_dump(mode="json"), "user_id": user_id},
+                data={**payload, "user_id": user_id},
             )
         )
 
@@ -120,6 +125,9 @@ class LLMProviderUsecase:
         update_data = data.model_dump(exclude_none=True, mode="json")
         if not update_data:
             return llm_provider
+
+        if "api_key" in update_data:
+            update_data["api_key"] = encrypt(update_data["api_key"])
 
         llm_provider = await self._llm_provider_repository.update_by(
             session=session, data=update_data, id=provider_id

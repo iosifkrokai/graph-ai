@@ -74,9 +74,14 @@ Unblocks streaming, long pipelines, and scale.
 
 ## Phase 2 — Multi-provider LLM + secrets (2–4 weeks)
 
-- [ ] Real key encryption (Fernet/KMS) + `LLMProvider.api_key` migration; stop returning `config`.
+- [x] Real key encryption: Fernet (`utils/encryption.py`, `settings/encryption.py` with prod
+      fail-fast) + encrypted, write-only `LLMProvider.api_key` (migration `709163b05319`);
+      the key is never returned in any response. `config` stays for non-secret settings —
+      secrets belong in `api_key`.
 - [ ] OpenAI / Anthropic / OpenAI-compatible clients (the `BaseLLMClient` protocol is ready;
-      needs an enum value + factory branch in `llm/__init__.py`).
+      needs an enum value + factory branch in `llm/__init__.py`; decrypt `api_key` at client
+      construction). Anthropic client should use the official `anthropic` SDK, default model
+      `claude-opus-4-8`.
 - [ ] Generation params per node: `temperature`, `max_tokens`, `top_p`.
 - [ ] Token streaming from provider through to the UI.
 

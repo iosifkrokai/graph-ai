@@ -31,6 +31,9 @@ class LLMProviderCreate(BaseModel):
     name: str = Field(default=..., description="Provider name")
     type: LLMProviderType = Field(default=..., description="Provider type")
     config: dict = Field(default_factory=dict, description="Provider configuration")
+    api_key: str | None = Field(
+        default=None, description="API key for cloud providers (write-only)"
+    )
     base_url: AnyHttpUrl = Field(default=..., description="Custom base URL")
 
 
@@ -40,6 +43,9 @@ class LLMProviderUpdate(BaseModel):
     name: str | None = Field(default=None, description="Provider name")
     type: LLMProviderType | None = Field(default=None, description="Provider type")
     config: dict | None = Field(default=None, description="Provider configuration")
+    api_key: str | None = Field(
+        default=None, description="API key for cloud providers (write-only)"
+    )
     base_url: AnyHttpUrl | None = Field(default=None, description="Custom base URL")
 
     @model_validator(mode="after")

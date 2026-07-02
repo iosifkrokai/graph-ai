@@ -4,9 +4,11 @@ import uuid
 
 import pytest
 
+from db.repositories import LLMProviderRepository
 from enums import LLMProviderType
 from tests.factories import LLMProviderFactory, UserFactory
 from tests.test_api.base import BaseTestCase
+from utils.encryption import decrypt
 
 
 class TestLLMProviderCreate(BaseTestCase):
@@ -40,6 +42,34 @@ class TestLLMProviderCreate(BaseTestCase):
             pytest.fail("Provider user_id did not match current user")
         if data["config"] != payload["config"]:
             pytest.fail("Provider config did not match request")
+
+    @pytest.mark.asyncio
+    async def test_api_key_stored_encrypted_and_not_returned(self) -> None:
+        """A provided API key is encrypted at rest and never returned."""
+        _, headers = await self.create_user_and_get_token()
+        plaintext = "sk-super-secret-key"
+        payload = {
+            "name": f"provider-{uuid.uuid4().hex[:8]}",
+            "type": LLMProviderType.OLLAMA,
+            "base_url": "https://example.com",
+            "api_key": plaintext,
+        }
+
+        response = await self.client.post(url=self.url, json=payload, headers=headers)
+
+        data = await self.assert_response_dict(response=response)
+        if "api_key" in data:
+            pytest.fail("API key must never appear in the response")
+
+        stored = await LLMProviderRepository().get_by(
+            session=self.session, id=data["id"]
+        )
+        if stored is None or stored.api_key is None:
+            pytest.fail("Expected the provider to persist an API key")
+        elif stored.api_key == plaintext:
+            pytest.fail("API key must be stored encrypted, not as plaintext")
+        elif decrypt(stored.api_key) != plaintext:
+            pytest.fail("Stored API key must decrypt back to the original value")
 
 
 class TestLLMProviderList(BaseTestCase):

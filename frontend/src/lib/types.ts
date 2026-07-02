@@ -139,6 +139,7 @@ export interface LlmProviderCreatePayload {
   type: string
   base_url: string
   config?: Record<string, unknown>
+  api_key?: string | null
 }
 
 export interface LlmModel {
