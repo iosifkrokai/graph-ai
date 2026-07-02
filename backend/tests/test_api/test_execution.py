@@ -1147,9 +1147,7 @@ class TestExecutionParallel(BaseTestCase):
         if first_end is None or second_end is None:
             message = "Both branches should have finished timestamps"
             raise AssertionError(message)
-        overlapped = (
-            first.started_at < second_end and second.started_at < first_end
-        )
+        overlapped = first.started_at < second_end and second.started_at < first_end
         if not overlapped:
             pytest.fail("Independent branches did not overlap; ran serially")
 

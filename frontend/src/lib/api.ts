@@ -1,4 +1,5 @@
 import type {
+  ApiError,
   EdgeCreatePayload,
   EdgeResponse,
   Execution,

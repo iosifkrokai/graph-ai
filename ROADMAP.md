@@ -46,7 +46,7 @@ Cheap changes that de-risk everything else.
       model↔migration drift (`.github/workflows/backend.yml`).
 - [x] LLM node happy-path test with mocked Ollama chat (`tests/test_api/test_execution.py`).
 
-## Phase 1 — Asynchronous execution (main architectural shift, 3–5 weeks)
+## Phase 1 — Asynchronous execution ✅ done
 
 Unblocks streaming, long pipelines, and scale.
 
@@ -64,9 +64,13 @@ Unblocks streaming, long pipelines, and scale.
       double-submits).
 - [x] Reaper for executions stuck in `RUNNING` (worker crash mid-run) — ARQ cron
       `reap_stuck_executions` + `ExecutionUsecase.reap_stuck_executions`.
-- [ ] Parallelize independent branches (today the topological order runs strictly serially).
-- [ ] Frontend: move from 5s polling to SSE/WebSocket with per-node status (polling now
-      activates on `created`/`running`; push is the next step).
+- [x] Parallelize independent branches via wave scheduling — each concurrent node runs on
+      its own session (`_run_nodes_parallel` in `usecases/execution.py`); the worker enables
+      it by passing `session_factory`.
+- [x] Frontend consumes a `GET /executions/{id}/stream` SSE endpoint (fetch + `ReadableStream`
+      with the Bearer header) instead of interval polling (`api.streamExecution`,
+      `useExecutions.ts`). Server-side status stream today; upgrading to Redis pub/sub for
+      true push is a Phase 5 refinement.
 
 ## Phase 2 — Multi-provider LLM + secrets (2–4 weeks)
 

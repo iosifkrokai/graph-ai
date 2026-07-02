@@ -1,14 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { createExecution, getExecutions } from '../lib/api'
+import { createExecution, getExecutions, streamExecution } from '../lib/api'
 import type {
   ApiError,
   Execution,
   ExecutionStatus,
   RunInputPayload,
 } from '../lib/types'
-
-const POLL_INTERVAL_MS = 5000
 
 // Executions in these states are still being processed by the worker.
 const ACTIVE_STATUSES: ExecutionStatus[] = ['created', 'running']
@@ -70,20 +68,45 @@ export function useExecutions({
     void refreshExecutions(activeWorkflowId)
   }, [activeWorkflowId, refreshExecutions, token])
 
+  const activeExecutionId = useMemo(
+    () =>
+      lastExecution && ACTIVE_STATUSES.includes(lastExecution.status)
+        ? lastExecution.id
+        : null,
+    [lastExecution],
+  )
+
   useEffect(() => {
-    if (!token || !activeWorkflowId) {
-      return
-    }
-    if (!executions.some((execution) => ACTIVE_STATUSES.includes(execution.status))) {
+    if (!token || !activeWorkflowId || activeExecutionId === null) {
       return
     }
 
-    const timer = window.setInterval(() => {
-      void refreshExecutions(activeWorkflowId)
-    }, POLL_INTERVAL_MS)
+    const controller = new AbortController()
+    const workflowId = activeWorkflowId
 
-    return () => window.clearInterval(timer)
-  }, [activeWorkflowId, executions, refreshExecutions, token])
+    void streamExecution(
+      activeExecutionId,
+      (execution) => {
+        setLastExecution(execution)
+        setExecutions((previous) =>
+          previous.map((item) =>
+            item.id === execution.id ? execution : item,
+          ),
+        )
+      },
+      controller.signal,
+    )
+      .catch(() => {
+        // Stream unsupported or interrupted; the finally block re-syncs state.
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          void refreshExecutions(workflowId)
+        }
+      })
+
+    return () => controller.abort()
+  }, [activeExecutionId, activeWorkflowId, refreshExecutions, token])
 
   const handleRun = useCallback(
     async (input: RunInputPayload): Promise<void> => {
