@@ -1,5 +1,6 @@
 """Execution use case implementation."""
 
+import logging
 from collections import deque
 from datetime import UTC, datetime
 
@@ -29,6 +30,8 @@ from schemas import (
     ExecutionResponse,
     NodeResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionUsecase:
@@ -100,22 +103,32 @@ class ExecutionUsecase:
                 "status": ExecutionStatus.RUNNING,
             },
         )
+        execution_id = execution.id
 
         try:
             output_data = await self._run_execution(
-                session=session, execution_id=execution.id, graph=graph
+                session=session, execution_id=execution_id, graph=graph
             )
         except BaseError as exc:
+            logger.warning("Execution %s failed: %s", execution_id, exc.message)
             await self._mark_execution_failed(
-                session=session, execution_id=execution.id, error=exc.message
+                session=session, execution_id=execution_id, error=exc.message
+            )
+        except Exception:
+            logger.exception("Execution %s failed with unexpected error", execution_id)
+            await session.rollback()
+            await self._mark_execution_failed(
+                session=session,
+                execution_id=execution_id,
+                error="Internal execution error",
             )
         else:
             await self._mark_execution_success(
-                session=session, execution_id=execution.id, output_data=output_data
+                session=session, execution_id=execution_id, output_data=output_data
             )
 
         return await self.get_execution(
-            session=session, execution_id=execution.id, user_id=user_id
+            session=session, execution_id=execution_id, user_id=user_id
         )
 
     async def get_executions(

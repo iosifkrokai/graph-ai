@@ -7,7 +7,13 @@ import httpx
 import pytest
 
 from enums import ExecutionStatus, NodeType
-from tests.factories import EdgeFactory, ExecutionFactory, NodeFactory, WorkflowFactory
+from tests.factories import (
+    EdgeFactory,
+    ExecutionFactory,
+    LLMProviderFactory,
+    NodeFactory,
+    WorkflowFactory,
+)
 from tests.test_api.base import BaseTestCase
 
 
@@ -61,6 +67,111 @@ class TestExecutionCreate(BaseTestCase):
             pytest.fail("Execution output did not match expected value")
         if data["error"] is not None:
             pytest.fail("Execution error should be null for success")
+
+    @pytest.mark.asyncio
+    async def test_ok_with_llm_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Execution succeeds with an LLM node, mocking the Ollama chat call."""
+
+        class DummyResponse:
+            """Dummy HTTP response for Ollama chat tests."""
+
+            status_code = HTTPStatus.OK
+            text = ""
+
+            def raise_for_status(self) -> None:
+                """Keep successful status."""
+
+            def json(self) -> dict:
+                """Return a mock Ollama chat payload."""
+                return {
+                    "model": "test-model",
+                    "message": {"role": "assistant", "content": "hi from llm"},
+                    "done": True,
+                }
+
+        class DummyAsyncClient:
+            """Dummy async client that returns a fixed chat payload."""
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                """Allow constructing with any httpx kwargs."""
+
+            async def __aenter__(self) -> Self:
+                """Enter async context manager."""
+                return self
+
+            async def __aexit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc: BaseException | None,
+                tb: object,
+            ) -> bool:
+                """Exit async context manager."""
+                del exc_type, exc, tb
+                return False
+
+            async def post(self, *args: object, **kwargs: object) -> DummyResponse:
+                """Return a successful chat response."""
+                del args, kwargs
+                return DummyResponse()
+
+        monkeypatch.setattr("llm.ollama.httpx.AsyncClient", DummyAsyncClient)
+
+        user, headers = await self.create_user_and_get_token()
+        provider = await LLMProviderFactory.create_async(
+            session=self.session,
+            user_id=user["id"],
+            base_url="http://ollama:11434",
+        )
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        llm_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LLM,
+            data={
+                "label": "LLM",
+                "llm_provider_id": provider.id,
+                "model": "test-model",
+                "system_prompt": "You are a helpful assistant.",
+            },
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=llm_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=llm_node.id,
+            target_node_id=output_node.id,
+        )
+
+        response = await self.client.post(
+            url=self.url,
+            json={"workflow_id": workflow.id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+
+        data = await self.assert_response_dict(response=response)
+        if data["status"] != ExecutionStatus.SUCCESS:
+            pytest.fail("Execution with LLM node should succeed")
+        if data["output_data"] != {"value": "hi from llm"}:
+            pytest.fail("Execution output did not match mocked LLM content")
 
     @pytest.mark.asyncio
     async def test_ok_with_web_search_node(
@@ -491,6 +602,55 @@ class TestExecutionCreate(BaseTestCase):
             pytest.fail("Expected FAILED status for runtime execution error")
         if not data["error"]:
             pytest.fail("Expected error details for failed execution")
+
+    @pytest.mark.asyncio
+    async def test_execution_unexpected_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Unexpected (non-domain) errors are persisted as failed, not stranded."""
+
+        async def _raise(*args: object, **kwargs: object) -> str:
+            """Emulate an unexpected runtime failure inside a node handler."""
+            del args, kwargs
+            message = "boom"
+            raise RuntimeError(message)
+
+        monkeypatch.setattr("nodes.registry.NodeHandlerRegistry.execute", _raise)
+
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+
+        response = await self.client.post(
+            url=self.url,
+            json={"workflow_id": workflow.id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+
+        data = await self.assert_response_dict(response=response)
+        if data["status"] != ExecutionStatus.FAILED:
+            pytest.fail("Expected FAILED status for unexpected execution error")
+        if data["error"] != "Internal execution error":
+            pytest.fail("Expected generic error message for unexpected failure")
 
 
 class TestExecutionList(BaseTestCase):

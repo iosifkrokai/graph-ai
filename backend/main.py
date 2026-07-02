@@ -14,6 +14,9 @@ from api.routers import (
     workflow,
 )
 from exceptions import BaseError
+from logging_config import configure_logging
+
+configure_logging()
 
 app = FastAPI(title="Graph AI Backend")
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Backend is a Python 3.12 service built with FastAPI, SQLAlchemy async ORM, PostgreSQL, and Prefect for async workflow execution.
+Backend is a Python 3.12 service built with FastAPI, SQLAlchemy async ORM, and PostgreSQL. Workflow execution is currently synchronous (in-request); moving it off the request path is tracked in the root `ROADMAP.md`.
 
 ## Commands (run from repo root)
 
@@ -26,16 +26,19 @@ make back-lint && make back-format && make back-typecheck && make back-test
 backend/
 ├── main.py
 ├── sessions.py
+├── logging_config.py
+├── api/
+│   ├── dependencies/
+│   └── routers/
 ├── constants/
-├── dependencies/
+├── db/
+│   ├── migrations/
+│   ├── models/
+│   └── repositories/
 ├── enums/
 ├── exceptions/
-├── flows/
-├── integrations/
-├── migrations/
-├── models/
-├── repositories/
-├── routers/
+├── llm/
+├── nodes/
 ├── schemas/
 ├── settings/
 ├── usecases/
@@ -76,18 +79,18 @@ backend/
 - DB tests use testcontainers PostgreSQL (`tests/conftest.py`).
 - API tests live in `tests/test_api/` and use `BaseTestCase`.
 - Model factories live in `tests/factories/` and must be exported via `tests/factories/__init__.py`.
-- Prefect integration tests are temporarily deferred; current coverage focuses on API and usecase behavior.
+- Current coverage focuses on API and usecase behavior (execution graph validation, failure persistence, web-search node with mocked HTTP).
 
 ## Change checklist for a new backend entity
 
 1. Add enum (if needed): `enums/{entity}.py`
-2. Add model: `models/{entity}.py`
+2. Add model: `db/models/{entity}.py`
 3. Add schemas: `schemas/{entity}.py`
-4. Add repository: `repositories/{entity}.py`
+4. Add repository: `db/repositories/{entity}.py`
 5. Add usecase: `usecases/{entity}.py`
 6. Add exceptions: `exceptions/{entity}.py`
-7. Add dependency provider: `dependencies/{entity}.py`
-8. Add router: `routers/{entity}.py`
+7. Add dependency provider: `api/dependencies/{entity}.py`
+8. Add router: `api/routers/{entity}.py`
 9. Export public symbols in touched `__init__.py` files
 10. Add factory: `tests/factories/{entity}.py`
 11. Add API tests: `tests/test_api/test_{entity}.py`
