@@ -1,14 +1,18 @@
 """Execution API tests."""
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import Self
 
 import httpx
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.repositories import ExecutionRepository
 from enums import ExecutionStatus, NodeType
 from exceptions import ExecutionGraphValidationError, LLMProviderConnectionError
+from schemas import ExecutionResponse
 from tests.factories import (
     EdgeFactory,
     ExecutionFactory,
@@ -17,6 +21,23 @@ from tests.factories import (
     WorkflowFactory,
 )
 from tests.test_api.base import BaseTestCase
+from usecases import ExecutionUsecase
+
+
+async def run_execution(session: AsyncSession, execution_id: int) -> ExecutionResponse:
+    """Run a queued execution to completion (worker stand-in for tests).
+
+    Args:
+        session: The test session.
+        execution_id: The execution to run.
+
+    Returns:
+        The finalized execution.
+
+    """
+    return await ExecutionUsecase().run_execution(
+        session=session, execution_id=execution_id
+    )
 
 
 class TestExecutionCreate(BaseTestCase):
@@ -63,11 +84,15 @@ class TestExecutionCreate(BaseTestCase):
         )
         if data["workflow_id"] != workflow.id:
             pytest.fail("Execution workflow_id did not match request")
-        if data["status"] != ExecutionStatus.SUCCESS:
+        if data["status"] != ExecutionStatus.CREATED:
+            pytest.fail("Queued execution should start in CREATED state")
+
+        result = await run_execution(self.session, data["id"])
+        if result.status != ExecutionStatus.SUCCESS:
             pytest.fail("Execution status did not match success state")
-        if data["output_data"] != {"value": "hello"}:
+        if result.output_data != {"value": "hello"}:
             pytest.fail("Execution output did not match expected value")
-        if data["error"] is not None:
+        if result.error is not None:
             pytest.fail("Execution error should be null for success")
 
     @pytest.mark.asyncio
@@ -170,9 +195,10 @@ class TestExecutionCreate(BaseTestCase):
         )
 
         data = await self.assert_response_dict(response=response)
-        if data["status"] != ExecutionStatus.SUCCESS:
+        result = await run_execution(self.session, data["id"])
+        if result.status != ExecutionStatus.SUCCESS:
             pytest.fail("Execution with LLM node should succeed")
-        if data["output_data"] != {"value": "hi from llm"}:
+        if result.output_data != {"value": "hi from llm"}:
             pytest.fail("Execution output did not match mocked LLM content")
 
     @pytest.mark.asyncio
@@ -272,11 +298,12 @@ class TestExecutionCreate(BaseTestCase):
         )
 
         data = await self.assert_response_dict(response=response)
-        if data["status"] != ExecutionStatus.SUCCESS:
+        result = await run_execution(self.session, data["id"])
+        if result.status != ExecutionStatus.SUCCESS:
             pytest.fail("Execution with web search node should succeed")
         output_value = (
-            data.get("output_data", {}).get("value")
-            if isinstance(data.get("output_data"), dict)
+            result.output_data.get("value")
+            if isinstance(result.output_data, dict)
             else None
         )
         if not isinstance(output_value, str) or "DuckDuckGo" not in output_value:
@@ -358,9 +385,10 @@ class TestExecutionCreate(BaseTestCase):
         )
 
         data = await self.assert_response_dict(response=response)
-        if data["status"] != ExecutionStatus.FAILED:
+        result = await run_execution(self.session, data["id"])
+        if result.status != ExecutionStatus.FAILED:
             pytest.fail("Expected FAILED status for web search runtime error")
-        if not data.get("error"):
+        if not result.error:
             pytest.fail("Expected error details for failed web search execution")
 
     @pytest.mark.asyncio
@@ -600,9 +628,10 @@ class TestExecutionCreate(BaseTestCase):
         )
 
         data = await self.assert_response_dict(response=response)
-        if data["status"] != ExecutionStatus.FAILED:
+        result = await run_execution(self.session, data["id"])
+        if result.status != ExecutionStatus.FAILED:
             pytest.fail("Expected FAILED status for runtime execution error")
-        if not data["error"]:
+        if not result.error:
             pytest.fail("Expected error details for failed execution")
 
     @pytest.mark.asyncio
@@ -649,9 +678,10 @@ class TestExecutionCreate(BaseTestCase):
         )
 
         data = await self.assert_response_dict(response=response)
-        if data["status"] != ExecutionStatus.FAILED:
+        result = await run_execution(self.session, data["id"])
+        if result.status != ExecutionStatus.FAILED:
             pytest.fail("Expected FAILED status for unexpected execution error")
-        if data["error"] != "Internal execution error":
+        if result.error != "Internal execution error":
             pytest.fail("Expected generic error message for unexpected failure")
 
 
@@ -727,6 +757,7 @@ class TestNodeExecutionList(BaseTestCase):
             headers=headers,
         )
         execution = await self.assert_response_dict(response=run_response)
+        await run_execution(self.session, execution["id"])
 
         response = await self.client.get(
             url=f"/executions/{execution['id']}/nodes", headers=headers
@@ -790,6 +821,7 @@ class TestNodeExecutionList(BaseTestCase):
             headers=headers,
         )
         execution = await self.assert_response_dict(response=run_response)
+        await run_execution(self.session, execution["id"])
 
         response = await self.client.get(
             url=f"/executions/{execution['id']}/nodes", headers=headers
@@ -815,6 +847,7 @@ class TestNodeExecutionList(BaseTestCase):
             headers=owner_headers,
         )
         execution = await self.assert_response_dict(response=run_response)
+        await run_execution(self.session, execution["id"])
 
         _, other_headers = await self.create_user_and_get_token()
         response = await self.client.get(
@@ -856,13 +889,15 @@ class TestExecutionRetries(BaseTestCase):
         return workflow.id
 
     async def _run(self, workflow_id: int, headers: dict) -> dict:
-        """Trigger an execution and return the response body."""
+        """Trigger an execution, run it, and return the finalized body."""
         response = await self.client.post(
             url=self.url,
             json={"workflow_id": workflow_id, "input_data": {"value": "hello"}},
             headers=headers,
         )
-        return await self.assert_response_dict(response=response)
+        created = await self.assert_response_dict(response=response)
+        result = await run_execution(self.session, created["id"])
+        return result.model_dump(mode="json")
 
     @pytest.mark.asyncio
     async def test_retryable_error_succeeds_after_retry(
@@ -983,3 +1018,44 @@ class TestExecutionRetries(BaseTestCase):
             pytest.fail("Execution should fail when a node times out")
         if not data["error"] or "timed out" not in data["error"].lower():
             pytest.fail("Expected a timeout error message on the failed execution")
+
+
+class TestExecutionReaper(BaseTestCase):
+    """Tests for reaping executions stuck in RUNNING."""
+
+    @pytest.mark.asyncio
+    async def test_reaps_only_stale_running_executions(self) -> None:
+        """Old RUNNING executions are failed; recent ones are left alone."""
+        user, _ = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        stale_started = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(hours=2)
+        stale = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            status=ExecutionStatus.RUNNING,
+            started_at=stale_started,
+        )
+        fresh = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            status=ExecutionStatus.RUNNING,
+        )
+        stale_id = stale.id
+        fresh_id = fresh.id
+
+        reaped = await ExecutionUsecase().reap_stuck_executions(session=self.session)
+
+        expected_reaped = 1
+        if reaped != expected_reaped:
+            pytest.fail("Expected exactly one stuck execution to be reaped")
+
+        self.session.expire_all()
+        repository = ExecutionRepository()
+        stale_after = await repository.get_by(session=self.session, id=stale_id)
+        fresh_after = await repository.get_by(session=self.session, id=fresh_id)
+        if stale_after is None or stale_after.status != ExecutionStatus.FAILED:
+            pytest.fail("Stale RUNNING execution should be marked FAILED")
+        if fresh_after is None or fresh_after.status != ExecutionStatus.RUNNING:
+            pytest.fail("Recent RUNNING execution should be left untouched")

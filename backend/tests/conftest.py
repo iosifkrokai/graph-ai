@@ -12,10 +12,18 @@ from sqlalchemy.ext.asyncio import (
 )
 from testcontainers.postgres import PostgresContainer
 
-from api.dependencies import db
+from api.dependencies import db, queue
 from db.models import Base
 from main import app
 from settings import postgres_settings
+
+
+class _NoopArqPool:
+    """Stand-in ARQ pool that drops enqueued jobs during tests."""
+
+    async def enqueue_job(self, *args: object, **kwargs: object) -> None:
+        """Accept and ignore an enqueue call."""
+        del args, kwargs
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -65,7 +73,12 @@ async def test_client(test_session: AsyncSession) -> AsyncGenerator[AsyncClient,
         """Return the test session for dependency overrides."""
         return test_session
 
+    def override_get_arq_pool() -> _NoopArqPool:
+        """Return a no-op ARQ pool so tests need no Redis."""
+        return _NoopArqPool()
+
     app.dependency_overrides[db.get_session] = override_get_session
+    app.dependency_overrides[queue.get_arq_pool] = override_get_arq_pool
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"

@@ -3,8 +3,9 @@
 import asyncio
 import logging
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,7 @@ from constants import (
     MAX_NODE_ATTEMPTS,
     NODE_TIMEOUT_SECONDS,
     RETRY_BACKOFF_BASE_SECONDS,
+    STUCK_EXECUTION_TIMEOUT_SECONDS,
 )
 from db.repositories import (
     EdgeRepository,
@@ -85,21 +87,26 @@ class ExecutionUsecase:
         session: AsyncSession,
         user_id: int,
         data: ExecutionCreate,
+        enqueue: Callable[[int], Awaitable[None]],
     ) -> ExecutionResponse:
-        """Create and execute a workflow execution synchronously.
+        """Validate a workflow, persist a queued execution, and enqueue it.
+
+        The graph is validated synchronously so invalid workflows fail fast with a
+        4xx before any background work is scheduled. The actual run happens on a
+        worker via ``run_execution``.
 
         Args:
             session: The session.
             user_id: The owner user ID.
             data: The execution payload.
+            enqueue: Callback that schedules the execution for background running.
 
         Returns:
-            The created execution.
+            The created execution in ``CREATED`` (queued) state.
 
         Raises:
             WorkflowNotFoundError: If the workflow is not found.
             ExecutionGraphValidationError: If graph is invalid for execution.
-            ExecutionInputValidationError: If input payload is invalid.
 
         """
         workflow = await self._workflow_repository.get_by(
@@ -110,32 +117,63 @@ class ExecutionUsecase:
         if not workflow:
             raise WorkflowNotFoundError
 
-        graph = self._build_graph_context(
-            nodes=[
-                NodeResponse.model_validate(node)
-                for node in await self._node_repository.get_all(
-                    session=session,
-                    workflow_id=data.workflow_id,
-                )
-            ],
-            edges=[
-                EdgeResponse.model_validate(edge)
-                for edge in await self._edge_repository.get_all(
-                    session=session,
-                    workflow_id=data.workflow_id,
-                )
-            ],
-        )
+        # Validate the graph up front (fail-fast); the worker rebuilds it at run time.
+        await self._load_graph(session=session, workflow_id=data.workflow_id)
 
         execution = await self._execution_repository.create(
             session=session,
             data={
                 "workflow_id": data.workflow_id,
                 "input_data": data.input_data.model_dump(),
-                "status": ExecutionStatus.RUNNING,
+                "status": ExecutionStatus.CREATED,
             },
         )
-        execution_id = execution.id
+
+        await enqueue(execution.id)
+
+        return await self.get_execution(
+            session=session, execution_id=execution.id, user_id=user_id
+        )
+
+    async def run_execution(
+        self, session: AsyncSession, execution_id: int
+    ) -> ExecutionResponse:
+        """Run a queued execution to completion (worker entry point).
+
+        Args:
+            session: The session (owned by the worker, not the request).
+            execution_id: The execution to run.
+
+        Returns:
+            The finalized execution.
+
+        Raises:
+            ExecutionNotFoundError: If the execution is not found.
+            WorkflowNotFoundError: If the workflow is not found.
+            ExecutionGraphValidationError: If graph is invalid for execution.
+
+        """
+        execution = await self._execution_repository.get_by(
+            session=session, id=execution_id
+        )
+        if execution is None:
+            raise ExecutionNotFoundError
+
+        workflow = await self._workflow_repository.get_by(
+            session=session, id=execution.workflow_id
+        )
+        if workflow is None:
+            raise WorkflowNotFoundError
+
+        await self._execution_repository.update_by(
+            session=session,
+            id=execution_id,
+            data={"status": ExecutionStatus.RUNNING},
+        )
+
+        graph = await self._load_graph(
+            session=session, workflow_id=execution.workflow_id
+        )
 
         try:
             output_data = await self._run_execution(
@@ -159,8 +197,75 @@ class ExecutionUsecase:
                 session=session, execution_id=execution_id, output_data=output_data
             )
 
-        return await self.get_execution(
-            session=session, execution_id=execution_id, user_id=user_id
+        finalized = await self._execution_repository.get_by(
+            session=session, id=execution_id
+        )
+        if finalized is None:
+            raise ExecutionNotFoundError
+
+        return ExecutionResponse.model_validate(finalized)
+
+    async def reap_stuck_executions(
+        self,
+        session: AsyncSession,
+        older_than_seconds: int = STUCK_EXECUTION_TIMEOUT_SECONDS,
+    ) -> int:
+        """Mark executions stuck in RUNNING beyond the timeout as FAILED.
+
+        Args:
+            session: The session.
+            older_than_seconds: Minimum age (by ``started_at``) to consider stuck.
+
+        Returns:
+            The number of executions reaped.
+
+        """
+        cutoff = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(
+            seconds=older_than_seconds
+        )
+        running = await self._execution_repository.get_all(
+            session=session, status=ExecutionStatus.RUNNING
+        )
+        stuck = [execution for execution in running if execution.started_at < cutoff]
+        for execution in stuck:
+            logger.warning("Reaping stuck execution %s", execution.id)
+            await self._mark_execution_failed(
+                session=session,
+                execution_id=execution.id,
+                error="Execution timed out (worker did not finish)",
+            )
+
+        return len(stuck)
+
+    async def _load_graph(
+        self, session: AsyncSession, workflow_id: int
+    ) -> ExecutionGraphContext:
+        """Build and validate the execution graph for a workflow.
+
+        Args:
+            session: The session.
+            workflow_id: The workflow ID.
+
+        Returns:
+            The validated graph context.
+
+        Raises:
+            ExecutionGraphValidationError: If graph is invalid for execution.
+
+        """
+        return self._build_graph_context(
+            nodes=[
+                NodeResponse.model_validate(node)
+                for node in await self._node_repository.get_all(
+                    session=session, workflow_id=workflow_id
+                )
+            ],
+            edges=[
+                EdgeResponse.model_validate(edge)
+                for edge in await self._edge_repository.get_all(
+                    session=session, workflow_id=workflow_id
+                )
+            ],
         )
 
     async def get_executions(

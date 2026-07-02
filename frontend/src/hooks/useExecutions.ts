@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { createExecution, getExecutions } from '../lib/api'
-import type { ApiError, Execution, RunInputPayload } from '../lib/types'
+import type {
+  ApiError,
+  Execution,
+  ExecutionStatus,
+  RunInputPayload,
+} from '../lib/types'
 
 const POLL_INTERVAL_MS = 5000
+
+// Executions in these states are still being processed by the worker.
+const ACTIVE_STATUSES: ExecutionStatus[] = ['created', 'running']
 
 interface UseExecutionsParams {
   token: string | null
@@ -66,7 +74,7 @@ export function useExecutions({
     if (!token || !activeWorkflowId) {
       return
     }
-    if (!executions.some((execution) => execution.status === 'running')) {
+    if (!executions.some((execution) => ACTIVE_STATUSES.includes(execution.status))) {
       return
     }
 

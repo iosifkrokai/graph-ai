@@ -19,9 +19,24 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "5000:5000"
     command: [ "sh", "/docker-entrypoint.sh", "gunicorn", "main:app" ]
+
+  worker:
+    build:
+      context: ./backend
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: [ "arq", "worker.WorkerSettings" ]
 
   postgres:
     image: ${POSTGRES_IMAGE}
@@ -40,6 +55,19 @@ services:
         - "sh"
         - "-c"
         - "pg_isready -U ${POSTGRES_USER}"
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  redis:
+    image: ${REDIS_IMAGE}
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 40
@@ -69,3 +97,4 @@ services:
 volumes:
   postgres_data:
   ollama_data:
+  redis_data:

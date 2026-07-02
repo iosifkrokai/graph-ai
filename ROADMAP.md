@@ -50,18 +50,23 @@ Cheap changes that de-risk everything else.
 
 Unblocks streaming, long pipelines, and scale.
 
-- [ ] Move execution off the request path: task queue (ARQ/Celery/Dramatiq on Redis) + worker.
-      API returns `RUNNING` immediately.
+- [x] Move execution off the request path with **ARQ + Redis** (chosen via a real-Redis
+      PoC test). `POST /executions` validates the graph, persists `CREATED`, enqueues, and
+      returns `202` immediately; a worker (`worker.py`) runs it with its own session.
+      Wiring: `settings/redis.py`, `main.py` lifespan pool, `api/dependencies/queue.py`,
+      `docker-compose.yml` `redis`+`worker` services.
 - [x] Per-node result table (`node_executions`: status, output, timings, error) with
       per-node persistence in the runner and a `GET /executions/{id}/nodes` endpoint —
       pinpointed failures and the foundation for resumability + per-node UI status.
 - [x] Per-node retries with exponential backoff (retryable errors only) and a per-node
       wall-clock timeout (`constants/retry.py`, runner in `usecases/execution.py`).
-- [ ] Idempotency of enqueued executions (pairs with the queue/worker step).
-- [ ] Reaper for executions stuck in `RUNNING` (e.g. worker/process crash mid-run) —
-      belongs here rather than Phase 0, since only async execution can strand a run.
+- [x] Idempotency of enqueued executions via ARQ `_job_id="execution:{id}"` (dedupes
+      double-submits).
+- [x] Reaper for executions stuck in `RUNNING` (worker crash mid-run) — ARQ cron
+      `reap_stuck_executions` + `ExecutionUsecase.reap_stuck_executions`.
 - [ ] Parallelize independent branches (today the topological order runs strictly serially).
-- [ ] Frontend: move from 5s polling to SSE/WebSocket with per-node status.
+- [ ] Frontend: move from 5s polling to SSE/WebSocket with per-node status (polling now
+      activates on `created`/`running`; push is the next step).
 
 ## Phase 2 — Multi-provider LLM + secrets (2–4 weeks)
 

@@ -1,11 +1,13 @@
 """Execution API routes."""
 
+from http import HTTPStatus
 from typing import Annotated
 
+from arq import ArqRedis
 from fastapi import APIRouter, Body, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import auth, db, execution
+from api.dependencies import auth, db, execution, queue
 from schemas import (
     ExecutionCreate,
     ExecutionResponse,
@@ -16,7 +18,7 @@ from schemas import (
 router = APIRouter(prefix="/executions", tags=["Executions"])
 
 
-@router.post(path="")
+@router.post(path="", status_code=HTTPStatus.ACCEPTED)
 async def create_execution(
     data: Annotated[
         ExecutionCreate, Body(description="Data for creating an execution")
@@ -27,10 +29,20 @@ async def create_execution(
         Depends(dependency=execution.get_execution_usecase),
     ],
     current_user: Annotated[UserResponse, Depends(dependency=auth.get_current_user)],
+    pool: Annotated[ArqRedis, Depends(dependency=queue.get_arq_pool)],
 ) -> ExecutionResponse:
-    """Create a new execution."""
+    """Queue a new execution for background running."""
+
+    async def enqueue(execution_id: int) -> None:
+        """Enqueue the execution job, deduplicated by execution ID."""
+        await pool.enqueue_job(
+            "run_execution_task",
+            execution_id,
+            _job_id=f"execution:{execution_id}",
+        )
+
     return await usecase.create_execution(
-        session=session, user_id=current_user.id, data=data
+        session=session, user_id=current_user.id, data=data, enqueue=enqueue
     )
 
 
