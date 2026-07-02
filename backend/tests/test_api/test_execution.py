@@ -683,3 +683,141 @@ class TestExecutionList(BaseTestCase):
         ids = {item.get("id") for item in data}
         if first.id not in ids or second.id not in ids:
             pytest.fail("Expected executions to appear in list")
+
+
+class TestNodeExecutionList(BaseTestCase):
+    """Tests for GET /executions/{execution_id}/nodes."""
+
+    async def _create_workflow_with_input_output(self, user: dict) -> int:
+        """Create a minimal input -> output workflow and return its ID."""
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+        return workflow.id
+
+    @pytest.mark.asyncio
+    async def test_records_node_results_on_success(self) -> None:
+        """Every executed node is persisted with SUCCESS status and output."""
+        user, headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_workflow_with_input_output(user)
+
+        run_response = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+        execution = await self.assert_response_dict(response=run_response)
+
+        response = await self.client.get(
+            url=f"/executions/{execution['id']}/nodes", headers=headers
+        )
+
+        data = await self.assert_response_list(response=response)
+        expected_node_count = 2
+        if len(data) != expected_node_count:
+            pytest.fail("Expected one node execution per node in the path")
+        if any(item["status"] != ExecutionStatus.SUCCESS for item in data):
+            pytest.fail("Expected all node executions to be SUCCESS")
+        if not any(item["output"] == "hello" for item in data):
+            pytest.fail("Expected a node execution to carry the propagated output")
+
+    @pytest.mark.asyncio
+    async def test_records_failed_node(self) -> None:
+        """The failing node is persisted with FAILED status and an error."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        llm_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LLM,
+            data={
+                "label": "LLM",
+                "llm_provider_id": 999999,
+                "model": "test-model",
+                "system_prompt": "",
+            },
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=llm_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=llm_node.id,
+            target_node_id=output_node.id,
+        )
+
+        run_response = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow.id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+        execution = await self.assert_response_dict(response=run_response)
+
+        response = await self.client.get(
+            url=f"/executions/{execution['id']}/nodes", headers=headers
+        )
+
+        data = await self.assert_response_list(response=response)
+        failed = [item for item in data if item["status"] == ExecutionStatus.FAILED]
+        if len(failed) != 1:
+            pytest.fail("Expected exactly one FAILED node execution")
+        if failed[0]["node_id"] != llm_node.id:
+            pytest.fail("Expected the LLM node to be the failing node")
+        if not failed[0]["error"]:
+            pytest.fail("Expected error details on the failed node execution")
+
+    @pytest.mark.asyncio
+    async def test_other_user_cannot_read_node_results(self) -> None:
+        """Node results of another user's execution are not accessible."""
+        owner, owner_headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_workflow_with_input_output(owner)
+        run_response = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "hello"}},
+            headers=owner_headers,
+        )
+        execution = await self.assert_response_dict(response=run_response)
+
+        _, other_headers = await self.create_user_and_get_token()
+        response = await self.client.get(
+            url=f"/executions/{execution['id']}/nodes", headers=other_headers
+        )
+
+        if response.status_code != HTTPStatus.NOT_FOUND:
+            pytest.fail("Expected NOT_FOUND when reading another user's node results")

@@ -61,3 +61,18 @@ class ExecutionResponse(BaseModel):
     error: str | None = Field(default=None, description="Error message")
     started_at: datetime = Field(default=..., description="Started at")
     finished_at: datetime | None = Field(default=None, description="Finished at")
+
+
+class NodeExecutionResponse(BaseModel):
+    """Response model for a single node's result within an execution."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(default=..., description="Node execution ID", gt=0)
+    execution_id: int = Field(default=..., description="Parent execution ID", gt=0)
+    node_id: int = Field(default=..., description="Executed node ID", gt=0)
+    status: ExecutionStatus = Field(default=..., description="Node execution status")
+    output: str | None = Field(default=None, description="Node output text")
+    error: str | None = Field(default=None, description="Error message")
+    started_at: datetime = Field(default=..., description="Started at")
+    finished_at: datetime | None = Field(default=None, description="Finished at")

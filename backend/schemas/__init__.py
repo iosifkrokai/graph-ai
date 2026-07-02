@@ -8,6 +8,7 @@ from schemas.execution import (
     ExecutionInputPayload,
     ExecutionOutputPayload,
     ExecutionResponse,
+    NodeExecutionResponse,
 )
 from schemas.health import HealthResponse, ServiceHealthResponse
 from schemas.llm_provider import (
@@ -64,6 +65,7 @@ __all__ = [
     "NodeCatalogItem",
     "NodeCatalogItemResponse",
     "NodeCreate",
+    "NodeExecutionResponse",
     "NodeFieldDataSource",
     "NodeFieldDataSourceKind",
     "NodeFieldSpec",

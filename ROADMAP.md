@@ -52,8 +52,9 @@ Unblocks streaming, long pipelines, and scale.
 
 - [ ] Move execution off the request path: task queue (ARQ/Celery/Dramatiq on Redis) + worker.
       API returns `RUNNING` immediately.
-- [ ] Per-node result table (`node_execution`: status, input, output, timings, error) —
-      resumability and pinpointed failures.
+- [x] Per-node result table (`node_executions`: status, output, timings, error) with
+      per-node persistence in the runner and a `GET /executions/{id}/nodes` endpoint —
+      pinpointed failures and the foundation for resumability + per-node UI status.
 - [ ] Per-node retries with backoff and timeouts; idempotency.
 - [ ] Reaper for executions stuck in `RUNNING` (e.g. worker/process crash mid-run) —
       belongs here rather than Phase 0, since only async execution can strand a run.

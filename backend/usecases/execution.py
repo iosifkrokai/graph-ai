@@ -10,6 +10,7 @@ from db.repositories import (
     EdgeRepository,
     ExecutionRepository,
     LLMProviderRepository,
+    NodeExecutionRepository,
     NodeRepository,
     WorkflowRepository,
 )
@@ -28,6 +29,7 @@ from schemas import (
     ExecutionGraphContext,
     ExecutionOutputPayload,
     ExecutionResponse,
+    NodeExecutionResponse,
     NodeResponse,
 )
 
@@ -43,6 +45,7 @@ class ExecutionUsecase:
         self._workflow_repository = WorkflowRepository()
         self._node_repository = NodeRepository()
         self._edge_repository = EdgeRepository()
+        self._node_execution_repository = NodeExecutionRepository()
         self._llm_provider_repository = LLMProviderRepository()
         self._node_registry = NodeHandlerRegistry(
             llm_provider_repository=self._llm_provider_repository
@@ -193,6 +196,35 @@ class ExecutionUsecase:
 
         return ExecutionResponse.model_validate(execution)
 
+    async def get_node_executions(
+        self, session: AsyncSession, execution_id: int, user_id: int
+    ) -> list[NodeExecutionResponse]:
+        """List per-node results for an execution.
+
+        Args:
+            session: The session.
+            execution_id: The execution ID.
+            user_id: The owner user ID.
+
+        Returns:
+            The list of node execution results.
+
+        Raises:
+            ExecutionNotFoundError: If the execution is not found.
+            WorkflowNotFoundError: If the workflow is not owned by the user.
+
+        """
+        await self.get_execution(
+            session=session, execution_id=execution_id, user_id=user_id
+        )
+
+        return [
+            NodeExecutionResponse.model_validate(node_execution)
+            for node_execution in await self._node_execution_repository.get_all(
+                session=session, execution_id=execution_id
+            )
+        ]
+
     async def _run_execution(
         self, session: AsyncSession, execution_id: int, graph: ExecutionGraphContext
     ) -> ExecutionOutputPayload:
@@ -234,20 +266,48 @@ class ExecutionUsecase:
             parent_values = [
                 outputs_by_node[parent_id] for parent_id in graph.inbound[node_id]
             ]
-            if node.type is not NodeType.INPUT and not parent_values:
-                message = f"Node {node.id} does not have input value"
-                raise ExecutionGraphValidationError(message=message)
+            started_at = datetime.now(tz=UTC).replace(tzinfo=None)
+            try:
+                if node.type is not NodeType.INPUT and not parent_values:
+                    message = f"Node {node.id} does not have input value"
+                    raise ExecutionGraphValidationError(message=message)
 
-            outputs_by_node[node_id] = await self._node_registry.execute(
-                node_type=node.type,
-                context=NodeExecutionContext(
+                output = await self._node_registry.execute(
+                    node_type=node.type,
+                    context=NodeExecutionContext(
+                        session=session,
+                        workflow_owner_id=workflow.owner_id,
+                        node_data=node.data,
+                        parent_values=parent_values,
+                        input_value=input_value,
+                    ),
+                )
+            except BaseError as exc:
+                await self._node_execution_repository.create(
                     session=session,
-                    workflow_owner_id=workflow.owner_id,
-                    node_data=node.data,
-                    parent_values=parent_values,
-                    input_value=input_value,
-                ),
+                    data={
+                        "execution_id": execution_id,
+                        "node_id": node_id,
+                        "status": ExecutionStatus.FAILED,
+                        "error": exc.message,
+                        "started_at": started_at,
+                        "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
+                    },
+                )
+                raise
+
+            await self._node_execution_repository.create(
+                session=session,
+                data={
+                    "execution_id": execution_id,
+                    "node_id": node_id,
+                    "status": ExecutionStatus.SUCCESS,
+                    "output": output,
+                    "started_at": started_at,
+                    "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
+                },
             )
+            outputs_by_node[node_id] = output
 
         return ExecutionOutputPayload(value=outputs_by_node[graph.output_node_id])
 
