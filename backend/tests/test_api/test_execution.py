@@ -7,9 +7,9 @@ from typing import Self
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from db.repositories import ExecutionRepository
+from db.repositories import ExecutionRepository, NodeExecutionRepository
 from enums import ExecutionStatus, NodeType
 from exceptions import ExecutionGraphValidationError, LLMProviderConnectionError
 from schemas import ExecutionResponse
@@ -1059,3 +1059,170 @@ class TestExecutionReaper(BaseTestCase):
             pytest.fail("Stale RUNNING execution should be marked FAILED")
         if fresh_after is None or fresh_after.status != ExecutionStatus.RUNNING:
             pytest.fail("Recent RUNNING execution should be left untouched")
+
+
+class TestExecutionParallel(BaseTestCase):
+    """Tests for concurrent execution of independent graph branches."""
+
+    @pytest.mark.asyncio
+    async def test_independent_branches_run_concurrently(
+        self, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two sibling branches of a diamond graph overlap in time."""
+
+        async def slow_execute(*args: object, **kwargs: object) -> str:
+            """Simulate slow node work so concurrent branches overlap."""
+            del args, kwargs
+            await asyncio.sleep(0.3)
+            return "ok"
+
+        monkeypatch.setattr("nodes.registry.NodeHandlerRegistry.execute", slow_execute)
+
+        user, _ = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        branch_a = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LLM,
+            data={"label": "A"},
+        )
+        branch_b = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LLM,
+            data={"label": "B"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        for source, target in (
+            (input_node, branch_a),
+            (input_node, branch_b),
+            (branch_a, output_node),
+            (branch_b, output_node),
+        ):
+            await EdgeFactory.create_async(
+                session=self.session,
+                workflow_id=workflow.id,
+                source_node_id=source.id,
+                target_node_id=target.id,
+            )
+        execution = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            status=ExecutionStatus.CREATED,
+            input_data={"value": "hello"},
+        )
+        execution_id = execution.id
+        a_id = branch_a.id
+        b_id = branch_b.id
+
+        factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+        result = await ExecutionUsecase().run_execution(
+            session=self.session, execution_id=execution_id, session_factory=factory
+        )
+        if result.status != ExecutionStatus.SUCCESS:
+            pytest.fail("Parallel diamond execution should succeed")
+
+        self.session.expire_all()
+        rows = await NodeExecutionRepository().get_all(
+            session=self.session, execution_id=execution_id
+        )
+        by_node = {row.node_id: row for row in rows}
+        first = by_node[a_id]
+        second = by_node[b_id]
+        first_end = first.finished_at
+        second_end = second.finished_at
+        if first_end is None or second_end is None:
+            message = "Both branches should have finished timestamps"
+            raise AssertionError(message)
+        overlapped = (
+            first.started_at < second_end and second.started_at < first_end
+        )
+        if not overlapped:
+            pytest.fail("Independent branches did not overlap; ran serially")
+
+
+class TestExecutionStream(BaseTestCase):
+    """Tests for GET /executions/{execution_id}/stream (SSE)."""
+
+    async def _create_input_output_workflow(self, user: dict) -> int:
+        """Create a minimal input -> output workflow and return its ID."""
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+        return workflow.id
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_terminal_status(self) -> None:
+        """The stream emits an SSE frame with the terminal status and closes."""
+        user, headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_input_output_workflow(user)
+
+        run_response = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+        created = await self.assert_response_dict(response=run_response)
+        await run_execution(self.session, created["id"])
+
+        response = await self.client.get(
+            url=f"/executions/{created['id']}/stream", headers=headers
+        )
+
+        if response.status_code != HTTPStatus.OK:
+            pytest.fail("Stream request should return OK")
+        if not response.headers["content-type"].startswith("text/event-stream"):
+            pytest.fail("Stream should use the SSE content type")
+        if "data:" not in response.text or ExecutionStatus.SUCCESS not in response.text:
+            pytest.fail("Stream should emit the terminal SUCCESS status")
+
+    @pytest.mark.asyncio
+    async def test_other_user_cannot_stream(self) -> None:
+        """A stream for another user's execution is rejected before streaming."""
+        owner, owner_headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_input_output_workflow(owner)
+        run_response = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "hello"}},
+            headers=owner_headers,
+        )
+        created = await self.assert_response_dict(response=run_response)
+
+        _, other_headers = await self.create_user_and_get_token()
+        response = await self.client.get(
+            url=f"/executions/{created['id']}/stream", headers=other_headers
+        )
+
+        if response.status_code != HTTPStatus.NOT_FOUND:
+            pytest.fail("Expected NOT_FOUND streaming another user's execution")

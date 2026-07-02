@@ -5,6 +5,7 @@ from typing import Annotated
 
 from arq import ArqRedis
 from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import auth, db, execution, queue
@@ -75,4 +76,28 @@ async def list_node_executions(
     """List per-node results for an execution."""
     return await usecase.get_node_executions(
         session=session, execution_id=execution_id, user_id=current_user.id
+    )
+
+
+@router.get(path="/{execution_id}/stream")
+async def stream_execution(
+    execution_id: Annotated[int, Path(gt=0)],
+    session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
+    usecase: Annotated[
+        execution.ExecutionUsecase,
+        Depends(dependency=execution.get_execution_usecase),
+    ],
+    current_user: Annotated[UserResponse, Depends(dependency=auth.get_current_user)],
+) -> StreamingResponse:
+    """Stream an execution's status as Server-Sent Events until it is terminal."""
+    # Validate ownership up front so a missing/forbidden execution returns a
+    # proper error response instead of failing mid-stream.
+    await usecase.get_execution(
+        session=session, execution_id=execution_id, user_id=current_user.id
+    )
+    return StreamingResponse(
+        usecase.stream_execution(
+            session=session, execution_id=execution_id, user_id=current_user.id
+        ),
+        media_type="text/event-stream",
     )

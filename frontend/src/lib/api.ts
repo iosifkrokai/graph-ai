@@ -159,6 +159,55 @@ export async function getExecutions(
   return request<Execution[]>(`/executions?workflow_id=${workflowId}`)
 }
 
+export async function streamExecution(
+  executionId: number,
+  onExecution: (execution: Execution) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const headers: Record<string, string> = {}
+  if (currentToken) {
+    headers['Authorization'] = `Bearer ${currentToken}`
+  }
+
+  const response = await fetch(`${BASE}/executions/${executionId}/stream`, {
+    headers,
+    signal,
+  })
+
+  if (!response.ok || !response.body) {
+    throw { message: 'Stream failed', status: response.status } as ApiError
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const frames = buffer.split('\n\n')
+    buffer = frames.pop() ?? ''
+
+    for (const frame of frames) {
+      const dataLine = frame
+        .split('\n')
+        .find((line) => line.startsWith('data:'))
+      if (!dataLine) {
+        continue
+      }
+
+      const payload = dataLine.slice('data:'.length).trim()
+      if (payload) {
+        onExecution(JSON.parse(payload) as Execution)
+      }
+    }
+  }
+}
+
 export async function createExecution(
   workflowId: number,
   inputData: RunInputPayload,

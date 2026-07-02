@@ -3,16 +3,18 @@
 import asyncio
 import logging
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from constants import (
     MAX_NODE_ATTEMPTS,
     NODE_TIMEOUT_SECONDS,
     RETRY_BACKOFF_BASE_SECONDS,
+    STREAM_MAX_ITERATIONS,
+    STREAM_POLL_SECONDS,
     STUCK_EXECUTION_TIMEOUT_SECONDS,
 )
 from db.repositories import (
@@ -136,13 +138,19 @@ class ExecutionUsecase:
         )
 
     async def run_execution(
-        self, session: AsyncSession, execution_id: int
+        self,
+        session: AsyncSession,
+        execution_id: int,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> ExecutionResponse:
         """Run a queued execution to completion (worker entry point).
 
         Args:
             session: The session (owned by the worker, not the request).
             execution_id: The execution to run.
+            session_factory: When provided, independent graph branches run
+                concurrently, each node on its own session. When ``None``, nodes
+                run serially on ``session``.
 
         Returns:
             The finalized execution.
@@ -177,7 +185,10 @@ class ExecutionUsecase:
 
         try:
             output_data = await self._run_execution(
-                session=session, execution_id=execution_id, graph=graph
+                session=session,
+                execution_id=execution_id,
+                graph=graph,
+                session_factory=session_factory,
             )
         except BaseError as exc:
             logger.warning("Execution %s failed: %s", execution_id, exc.message)
@@ -359,8 +370,37 @@ class ExecutionUsecase:
             )
         ]
 
+    async def stream_execution(
+        self, session: AsyncSession, execution_id: int, user_id: int
+    ) -> AsyncGenerator[str, None]:
+        """Yield SSE ``data:`` frames of an execution's status until terminal.
+
+        Args:
+            session: The session.
+            execution_id: The execution ID.
+            user_id: The owner user ID.
+
+        Yields:
+            SSE-formatted status frames, ending once the execution is terminal.
+
+        """
+        terminal = {ExecutionStatus.SUCCESS, ExecutionStatus.FAILED}
+        for _ in range(STREAM_MAX_ITERATIONS):
+            session.expire_all()
+            execution = await self.get_execution(
+                session=session, execution_id=execution_id, user_id=user_id
+            )
+            yield f"data: {execution.model_dump_json()}\n\n"
+            if execution.status in terminal:
+                return
+            await asyncio.sleep(STREAM_POLL_SECONDS)
+
     async def _run_execution(
-        self, session: AsyncSession, execution_id: int, graph: ExecutionGraphContext
+        self,
+        session: AsyncSession,
+        execution_id: int,
+        graph: ExecutionGraphContext,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> ExecutionOutputPayload:
         """Execute workflow nodes for an execution and return output payload.
 
@@ -368,6 +408,7 @@ class ExecutionUsecase:
             session: Database session.
             execution_id: Execution ID.
             graph: Validated graph context.
+            session_factory: When provided, independent branches run concurrently.
 
         Returns:
             Output payload.
@@ -398,6 +439,35 @@ class ExecutionUsecase:
             workflow_owner_id=workflow.owner_id,
             input_value=self._extract_input_value(input_data=execution.input_data),
         )
+
+        if session_factory is None:
+            outputs_by_node = await self._run_nodes_serial(
+                session=session, run_context=run_context, graph=graph
+            )
+        else:
+            outputs_by_node = await self._run_nodes_parallel(
+                run_context=run_context, graph=graph, session_factory=session_factory
+            )
+
+        return ExecutionOutputPayload(value=outputs_by_node[graph.output_node_id])
+
+    async def _run_nodes_serial(
+        self,
+        session: AsyncSession,
+        run_context: _NodeRunContext,
+        graph: ExecutionGraphContext,
+    ) -> dict[int, str]:
+        """Run nodes one at a time in topological order.
+
+        Args:
+            session: Database session shared by all nodes.
+            run_context: Loop-invariant run context.
+            graph: Validated graph context.
+
+        Returns:
+            Mapping of node ID to output text.
+
+        """
         outputs_by_node: dict[int, str] = {}
         for node_id in graph.topological_order:
             node = graph.nodes_by_id[node_id]
@@ -411,7 +481,97 @@ class ExecutionUsecase:
                 parent_values=parent_values,
             )
 
-        return ExecutionOutputPayload(value=outputs_by_node[graph.output_node_id])
+        return outputs_by_node
+
+    async def _run_nodes_parallel(
+        self,
+        run_context: _NodeRunContext,
+        graph: ExecutionGraphContext,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> dict[int, str]:
+        """Run nodes wave by wave, concurrently within each wave.
+
+        Each node runs on its own session so concurrent nodes never share one
+        AsyncSession. A node becomes ready once all its parents have completed.
+
+        Args:
+            run_context: Loop-invariant run context.
+            graph: Validated graph context.
+            session_factory: Factory for per-node sessions.
+
+        Returns:
+            Mapping of node ID to output text.
+
+        Raises:
+            BaseError: If any node fails after exhausting its attempts.
+
+        """
+        indegree = {
+            node_id: len(graph.inbound[node_id]) for node_id in graph.nodes_by_id
+        }
+        outputs_by_node: dict[int, str] = {}
+        ready = [node_id for node_id, degree in indegree.items() if degree == 0]
+
+        while ready:
+            wave_results = await asyncio.gather(
+                *(
+                    self._run_node_isolated(
+                        session_factory=session_factory,
+                        run_context=run_context,
+                        node=graph.nodes_by_id[node_id],
+                        parent_values=[
+                            outputs_by_node[parent_id]
+                            for parent_id in graph.inbound[node_id]
+                        ],
+                    )
+                    for node_id in ready
+                ),
+                return_exceptions=True,
+            )
+            for result in wave_results:
+                if isinstance(result, BaseException):
+                    raise result
+                node_id, output = result
+                outputs_by_node[node_id] = output
+
+            next_ready: list[int] = []
+            for node_id in ready:
+                for child_id in graph.outbound[node_id]:
+                    indegree[child_id] -= 1
+                    if indegree[child_id] == 0:
+                        next_ready.append(child_id)
+            ready = next_ready
+
+        return outputs_by_node
+
+    async def _run_node_isolated(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        run_context: _NodeRunContext,
+        node: NodeResponse,
+        parent_values: list[str],
+    ) -> tuple[int, str]:
+        """Run one node on a dedicated session and return its ID and output.
+
+        Args:
+            session_factory: Factory for the node's own session.
+            run_context: Loop-invariant run context.
+            node: Node to execute.
+            parent_values: Outputs of the node's parents.
+
+        Returns:
+            The node ID paired with its output text.
+
+        """
+        async with session_factory() as node_session:
+            output = await self._run_node(
+                session=node_session,
+                run_context=run_context,
+                node=node,
+                parent_values=parent_values,
+            )
+
+        return node.id, output
 
     async def _run_node(
         self,

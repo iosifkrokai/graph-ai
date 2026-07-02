@@ -28,7 +28,9 @@ async def run_execution_task(ctx: dict[Any, Any], execution_id: int) -> None:
     logger.info("Running execution %s", execution_id)
     async with async_session() as session:
         await ExecutionUsecase().run_execution(
-            session=session, execution_id=execution_id
+            session=session,
+            execution_id=execution_id,
+            session_factory=async_session,
         )
 
 
