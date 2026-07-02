@@ -32,6 +32,8 @@ class NodeDataValidationError(BaseError):
 class WebSearchConnectionError(BaseError):
     """Raised when a web search request fails."""
 
+    retryable = True
+
     def __init__(
         self,
         message: str = "Web search provider request failed",

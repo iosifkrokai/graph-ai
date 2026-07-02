@@ -39,3 +39,17 @@ class ExecutionInputValidationError(BaseError):
     ) -> None:
         """Initialize the error."""
         super().__init__(message=message, status_code=status_code)
+
+
+class NodeExecutionTimeoutError(BaseError):
+    """Raised when a single node exceeds its execution time budget."""
+
+    retryable = True
+
+    def __init__(
+        self,
+        message: str = "Node execution timed out",
+        status_code: HTTPStatus = HTTPStatus.GATEWAY_TIMEOUT,
+    ) -> None:
+        """Initialize the error."""
+        super().__init__(message=message, status_code=status_code)

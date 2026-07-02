@@ -20,6 +20,8 @@ class LLMProviderNotFoundError(BaseError):
 class LLMProviderConnectionError(BaseError):
     """Raised when the LLM provider is unreachable."""
 
+    retryable = True
+
     def __init__(
         self,
         message: str = "LLM provider is unreachable",

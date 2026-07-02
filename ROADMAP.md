@@ -55,7 +55,9 @@ Unblocks streaming, long pipelines, and scale.
 - [x] Per-node result table (`node_executions`: status, output, timings, error) with
       per-node persistence in the runner and a `GET /executions/{id}/nodes` endpoint —
       pinpointed failures and the foundation for resumability + per-node UI status.
-- [ ] Per-node retries with backoff and timeouts; idempotency.
+- [x] Per-node retries with exponential backoff (retryable errors only) and a per-node
+      wall-clock timeout (`constants/retry.py`, runner in `usecases/execution.py`).
+- [ ] Idempotency of enqueued executions (pairs with the queue/worker step).
 - [ ] Reaper for executions stuck in `RUNNING` (e.g. worker/process crash mid-run) —
       belongs here rather than Phase 0, since only async execution can strand a run.
 - [ ] Parallelize independent branches (today the topological order runs strictly serially).

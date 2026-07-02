@@ -1,5 +1,6 @@
 """Execution API tests."""
 
+import asyncio
 from http import HTTPStatus
 from typing import Self
 
@@ -7,6 +8,7 @@ import httpx
 import pytest
 
 from enums import ExecutionStatus, NodeType
+from exceptions import ExecutionGraphValidationError, LLMProviderConnectionError
 from tests.factories import (
     EdgeFactory,
     ExecutionFactory,
@@ -821,3 +823,163 @@ class TestNodeExecutionList(BaseTestCase):
 
         if response.status_code != HTTPStatus.NOT_FOUND:
             pytest.fail("Expected NOT_FOUND when reading another user's node results")
+
+
+class TestExecutionRetries(BaseTestCase):
+    """Tests for node-level retries and timeouts."""
+
+    url = "/executions"
+
+    async def _create_input_output_workflow(self, user: dict) -> int:
+        """Create a minimal input -> output workflow and return its ID."""
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+        return workflow.id
+
+    async def _run(self, workflow_id: int, headers: dict) -> dict:
+        """Trigger an execution and return the response body."""
+        response = await self.client.post(
+            url=self.url,
+            json={"workflow_id": workflow_id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+        return await self.assert_response_dict(response=response)
+
+    @pytest.mark.asyncio
+    async def test_retryable_error_succeeds_after_retry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A transient node failure is retried and the execution succeeds."""
+        calls = {"count": 0}
+
+        async def flaky(*args: object, **kwargs: object) -> str:
+            """Fail on the first call, then succeed."""
+            del args, kwargs
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise LLMProviderConnectionError(message="temporary blip")
+            return "ok"
+
+        monkeypatch.setattr("nodes.registry.NodeHandlerRegistry.execute", flaky)
+        monkeypatch.setattr(
+            "usecases.execution.ExecutionUsecase._retry_delay",
+            lambda _self, attempt: 0.0 * attempt,
+        )
+
+        user, headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_input_output_workflow(user)
+
+        data = await self._run(workflow_id=workflow_id, headers=headers)
+
+        if data["status"] != ExecutionStatus.SUCCESS:
+            pytest.fail("Execution should succeed after a retryable failure")
+        expected_calls = 3
+        if calls["count"] != expected_calls:
+            pytest.fail("Expected input retry (2 calls) plus output call")
+
+    @pytest.mark.asyncio
+    async def test_retryable_error_fails_after_exhausting_retries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A persistently failing node is retried then marked FAILED."""
+        calls = {"count": 0}
+
+        async def always_failing(*args: object, **kwargs: object) -> str:
+            """Raise a retryable error on every call."""
+            del args, kwargs
+            calls["count"] += 1
+            raise LLMProviderConnectionError(message="still down")
+
+        monkeypatch.setattr(
+            "nodes.registry.NodeHandlerRegistry.execute", always_failing
+        )
+        monkeypatch.setattr(
+            "usecases.execution.ExecutionUsecase._retry_delay",
+            lambda _self, attempt: 0.0 * attempt,
+        )
+
+        user, headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_input_output_workflow(user)
+
+        data = await self._run(workflow_id=workflow_id, headers=headers)
+
+        if data["status"] != ExecutionStatus.FAILED:
+            pytest.fail("Execution should fail after exhausting retries")
+        expected_attempts = 3
+        if calls["count"] != expected_attempts:
+            pytest.fail("Expected the node to be attempted exactly max-attempts times")
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_error_is_not_retried(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-retryable node error fails immediately without retries."""
+        calls = {"count": 0}
+
+        async def config_error(*args: object, **kwargs: object) -> str:
+            """Raise a non-retryable validation error."""
+            del args, kwargs
+            calls["count"] += 1
+            raise ExecutionGraphValidationError(message="bad config")
+
+        monkeypatch.setattr("nodes.registry.NodeHandlerRegistry.execute", config_error)
+
+        user, headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_input_output_workflow(user)
+
+        data = await self._run(workflow_id=workflow_id, headers=headers)
+
+        if data["status"] != ExecutionStatus.FAILED:
+            pytest.fail("Execution should fail on a non-retryable error")
+        if calls["count"] != 1:
+            pytest.fail("A non-retryable error must not be retried")
+
+    @pytest.mark.asyncio
+    async def test_node_timeout_marks_execution_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A node exceeding its time budget is timed out and fails the run."""
+
+        async def hanging(*args: object, **kwargs: object) -> str:
+            """Sleep past the (tiny) node timeout budget."""
+            del args, kwargs
+            await asyncio.sleep(1)
+            return "never"
+
+        monkeypatch.setattr("nodes.registry.NodeHandlerRegistry.execute", hanging)
+        monkeypatch.setattr(
+            "usecases.execution.ExecutionUsecase._node_timeout_seconds", 0.01
+        )
+        monkeypatch.setattr(
+            "usecases.execution.ExecutionUsecase._retry_delay",
+            lambda _self, attempt: 0.0 * attempt,
+        )
+
+        user, headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_input_output_workflow(user)
+
+        data = await self._run(workflow_id=workflow_id, headers=headers)
+
+        if data["status"] != ExecutionStatus.FAILED:
+            pytest.fail("Execution should fail when a node times out")
+        if not data["error"] or "timed out" not in data["error"].lower():
+            pytest.fail("Expected a timeout error message on the failed execution")

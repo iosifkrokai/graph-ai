@@ -1,11 +1,18 @@
 """Execution use case implementation."""
 
+import asyncio
 import logging
 from collections import deque
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from constants import (
+    MAX_NODE_ATTEMPTS,
+    NODE_TIMEOUT_SECONDS,
+    RETRY_BACKOFF_BASE_SECONDS,
+)
 from db.repositories import (
     EdgeRepository,
     ExecutionRepository,
@@ -20,6 +27,7 @@ from exceptions import (
     ExecutionGraphValidationError,
     ExecutionInputValidationError,
     ExecutionNotFoundError,
+    NodeExecutionTimeoutError,
     WorkflowNotFoundError,
 )
 from nodes import NodeExecutionContext, NodeHandlerRegistry
@@ -36,8 +44,29 @@ from schemas import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _NodeRunContext:
+    """Loop-invariant context shared across node executions in one run."""
+
+    execution_id: int
+    workflow_owner_id: int
+    input_value: str
+
+
+@dataclass(frozen=True)
+class _NodeOutcome:
+    """Final result of a single node execution."""
+
+    status: ExecutionStatus
+    output: str | None = None
+    error: str | None = None
+
+
 class ExecutionUsecase:
     """Execution business logic."""
+
+    _max_node_attempts: int = MAX_NODE_ATTEMPTS
+    _node_timeout_seconds: float = NODE_TIMEOUT_SECONDS
 
     def __init__(self) -> None:
         """Initialize the usecase."""
@@ -259,57 +288,177 @@ class ExecutionUsecase:
         if workflow is None:
             raise WorkflowNotFoundError
 
-        input_value = self._extract_input_value(input_data=execution.input_data)
+        run_context = _NodeRunContext(
+            execution_id=execution_id,
+            workflow_owner_id=workflow.owner_id,
+            input_value=self._extract_input_value(input_data=execution.input_data),
+        )
         outputs_by_node: dict[int, str] = {}
         for node_id in graph.topological_order:
             node = graph.nodes_by_id[node_id]
             parent_values = [
                 outputs_by_node[parent_id] for parent_id in graph.inbound[node_id]
             ]
-            started_at = datetime.now(tz=UTC).replace(tzinfo=None)
-            try:
-                if node.type is not NodeType.INPUT and not parent_values:
-                    message = f"Node {node.id} does not have input value"
-                    raise ExecutionGraphValidationError(message=message)
+            outputs_by_node[node_id] = await self._run_node(
+                session=session,
+                run_context=run_context,
+                node=node,
+                parent_values=parent_values,
+            )
 
-                output = await self._node_registry.execute(
-                    node_type=node.type,
-                    context=NodeExecutionContext(
-                        session=session,
-                        workflow_owner_id=workflow.owner_id,
-                        node_data=node.data,
-                        parent_values=parent_values,
-                        input_value=input_value,
-                    ),
+        return ExecutionOutputPayload(value=outputs_by_node[graph.output_node_id])
+
+    async def _run_node(
+        self,
+        session: AsyncSession,
+        run_context: _NodeRunContext,
+        node: NodeResponse,
+        parent_values: list[str],
+    ) -> str:
+        """Run one node with retries, persisting its final result.
+
+        Args:
+            session: Database session.
+            run_context: Loop-invariant run context.
+            node: Node to execute.
+            parent_values: Outputs of the node's parents.
+
+        Returns:
+            The node output text.
+
+        Raises:
+            BaseError: If the node fails after exhausting its attempts.
+
+        """
+        started_at = datetime.now(tz=UTC).replace(tzinfo=None)
+        for attempt in range(1, self._max_node_attempts + 1):
+            try:
+                output = await self._run_node_once(
+                    session=session,
+                    run_context=run_context,
+                    node=node,
+                    parent_values=parent_values,
                 )
             except BaseError as exc:
-                await self._node_execution_repository.create(
+                if exc.retryable and attempt < self._max_node_attempts:
+                    logger.warning(
+                        "Node %s attempt %s failed (retryable): %s; retrying",
+                        node.id,
+                        attempt,
+                        exc.message,
+                    )
+                    await asyncio.sleep(self._retry_delay(attempt=attempt))
+                    continue
+
+                await self._record_node_result(
                     session=session,
-                    data={
-                        "execution_id": execution_id,
-                        "node_id": node_id,
-                        "status": ExecutionStatus.FAILED,
-                        "error": exc.message,
-                        "started_at": started_at,
-                        "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
-                    },
+                    run_context=run_context,
+                    node_id=node.id,
+                    started_at=started_at,
+                    outcome=_NodeOutcome(
+                        status=ExecutionStatus.FAILED, error=exc.message
+                    ),
                 )
                 raise
 
-            await self._node_execution_repository.create(
+            await self._record_node_result(
                 session=session,
-                data={
-                    "execution_id": execution_id,
-                    "node_id": node_id,
-                    "status": ExecutionStatus.SUCCESS,
-                    "output": output,
-                    "started_at": started_at,
-                    "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
-                },
+                run_context=run_context,
+                node_id=node.id,
+                started_at=started_at,
+                outcome=_NodeOutcome(status=ExecutionStatus.SUCCESS, output=output),
             )
-            outputs_by_node[node_id] = output
+            return output
 
-        return ExecutionOutputPayload(value=outputs_by_node[graph.output_node_id])
+        # Unreachable: the loop always returns or raises, but satisfies typing.
+        message = f"Node {node.id} exhausted retries"
+        raise ExecutionGraphValidationError(message=message)
+
+    async def _run_node_once(
+        self,
+        session: AsyncSession,
+        run_context: _NodeRunContext,
+        node: NodeResponse,
+        parent_values: list[str],
+    ) -> str:
+        """Execute a single node attempt within its time budget.
+
+        Args:
+            session: Database session.
+            run_context: Loop-invariant run context.
+            node: Node to execute.
+            parent_values: Outputs of the node's parents.
+
+        Returns:
+            The node output text.
+
+        Raises:
+            ExecutionGraphValidationError: If a non-input node has no input.
+            NodeExecutionTimeoutError: If the node exceeds its time budget.
+            BaseError: If the node handler fails.
+
+        """
+        if node.type is not NodeType.INPUT and not parent_values:
+            message = f"Node {node.id} does not have input value"
+            raise ExecutionGraphValidationError(message=message)
+
+        try:
+            async with asyncio.timeout(self._node_timeout_seconds):
+                return await self._node_registry.execute(
+                    node_type=node.type,
+                    context=NodeExecutionContext(
+                        session=session,
+                        workflow_owner_id=run_context.workflow_owner_id,
+                        node_data=node.data,
+                        parent_values=parent_values,
+                        input_value=run_context.input_value,
+                    ),
+                )
+        except TimeoutError as exc:
+            raise NodeExecutionTimeoutError from exc
+
+    async def _record_node_result(
+        self,
+        session: AsyncSession,
+        run_context: _NodeRunContext,
+        node_id: int,
+        started_at: datetime,
+        outcome: _NodeOutcome,
+    ) -> None:
+        """Persist a single node's result row.
+
+        Args:
+            session: Database session.
+            run_context: Loop-invariant run context.
+            node_id: Executed node ID.
+            started_at: When the node started.
+            outcome: The node's final status, output, and error.
+
+        """
+        await self._node_execution_repository.create(
+            session=session,
+            data={
+                "execution_id": run_context.execution_id,
+                "node_id": node_id,
+                "status": outcome.status,
+                "output": outcome.output,
+                "error": outcome.error,
+                "started_at": started_at,
+                "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
+            },
+        )
+
+    def _retry_delay(self, attempt: int) -> float:
+        """Compute exponential backoff delay for a retry attempt.
+
+        Args:
+            attempt: The 1-based attempt number that just failed.
+
+        Returns:
+            Delay in seconds before the next attempt.
+
+        """
+        return RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
 
     async def _mark_execution_success(
         self,

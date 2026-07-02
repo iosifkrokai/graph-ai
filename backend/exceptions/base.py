@@ -6,6 +6,8 @@ from http import HTTPStatus
 class BaseError(Exception):
     """Base exception carrying an HTTP status code and message."""
 
+    retryable: bool = False
+
     def __init__(
         self,
         message: str = "An error occurred",

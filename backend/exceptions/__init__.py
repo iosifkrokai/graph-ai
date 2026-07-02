@@ -7,6 +7,7 @@ from exceptions.execution import (
     ExecutionGraphValidationError,
     ExecutionInputValidationError,
     ExecutionNotFoundError,
+    NodeExecutionTimeoutError,
 )
 from exceptions.llm_provider import (
     LLMProviderConfigError,
@@ -34,6 +35,7 @@ __all__ = [
     "LLMProviderConnectionError",
     "LLMProviderNotFoundError",
     "NodeDataValidationError",
+    "NodeExecutionTimeoutError",
     "NodeNotFoundError",
     "UnsupportedLLMProviderError",
     "UserAlreadyExistsError",
