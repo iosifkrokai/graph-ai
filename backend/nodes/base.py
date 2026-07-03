@@ -1,9 +1,12 @@
 """Base contracts for execution node handlers."""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+OnToken = Callable[[str], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,7 @@ class NodeExecutionContext:
     node_data: dict[str, object]
     parent_values: list[str]
     input_value: str
+    on_token: OnToken | None = None
 
 
 class NodeHandler(Protocol):

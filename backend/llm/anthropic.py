@@ -1,7 +1,8 @@
 """Anthropic LLM client."""
 
 import contextlib
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
 from typing import Literal
 
 import anthropic
@@ -47,6 +48,57 @@ def _wrap_anthropic_errors() -> Iterator[None]:
         raise LLMProviderConnectionError(
             message="Anthropic provider is unreachable"
         ) from exc
+
+
+@dataclass(frozen=True)
+class _AnthropicRequest:
+    """Resolved Anthropic request arguments."""
+
+    max_tokens: int
+    system: list[TextBlockParam] | anthropic.Omit
+    turns: list[MessageParam]
+    temperature: float | anthropic.Omit
+    top_p: float | anthropic.Omit
+
+
+def _resolve_request(
+    messages: list[ChatMessage],
+    params: GenerationParams | None,
+) -> _AnthropicRequest:
+    """Build the resolved Anthropic request arguments.
+
+    Args:
+        messages: Ordered chat messages.
+        params: Optional generation parameters.
+
+    Returns:
+        Resolved request arguments with omit sentinels for unset fields.
+
+    """
+    system_prompt, turns = _split_system(messages)
+    max_tokens = DEFAULT_ANTHROPIC_MAX_TOKENS
+    temperature: float | anthropic.Omit = anthropic.omit
+    top_p: float | anthropic.Omit = anthropic.omit
+    if params is not None:
+        if params.max_tokens is not None:
+            max_tokens = params.max_tokens
+        if params.temperature is not None:
+            temperature = params.temperature
+        if params.top_p is not None:
+            top_p = params.top_p
+
+    system: list[TextBlockParam] | anthropic.Omit = (
+        [TextBlockParam(type="text", text=system_prompt)]
+        if system_prompt
+        else anthropic.omit
+    )
+    return _AnthropicRequest(
+        max_tokens=max_tokens,
+        system=system,
+        turns=turns,
+        temperature=temperature,
+        top_p=top_p,
+    )
 
 
 def _split_system(
@@ -138,32 +190,16 @@ class AnthropicClient:
             LLMProviderConnectionError: If the provider is unreachable.
 
         """
-        system_prompt, turns = _split_system(messages)
-        max_tokens = DEFAULT_ANTHROPIC_MAX_TOKENS
-        temperature: float | anthropic.Omit = anthropic.omit
-        top_p: float | anthropic.Omit = anthropic.omit
-        if params is not None:
-            if params.max_tokens is not None:
-                max_tokens = params.max_tokens
-            if params.temperature is not None:
-                temperature = params.temperature
-            if params.top_p is not None:
-                top_p = params.top_p
-
-        system: list[TextBlockParam] | anthropic.Omit = (
-            [TextBlockParam(type="text", text=system_prompt)]
-            if system_prompt
-            else anthropic.omit
-        )
+        request = _resolve_request(messages, params)
 
         with _wrap_anthropic_errors():
             async with self._client.messages.stream(
                 model=model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=turns,
-                temperature=temperature,
-                top_p=top_p,
+                max_tokens=request.max_tokens,
+                system=request.system,
+                messages=request.turns,
+                temperature=request.temperature,
+                top_p=request.top_p,
             ) as stream:
                 message = await stream.get_final_message()
 
@@ -176,3 +212,38 @@ class AnthropicClient:
             done=message.stop_reason != "max_tokens",
             raw=message.model_dump(),
         )
+
+    async def stream_chat(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        params: GenerationParams | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream chat completion text deltas from provider.
+
+        Args:
+            model: Model name.
+            messages: Chat messages.
+            params: Optional generation parameters.
+
+        Yields:
+            Text deltas as they arrive.
+
+        Raises:
+            LLMProviderConfigError: If the provider rejects the request.
+            LLMProviderConnectionError: If the provider is unreachable.
+
+        """
+        request = _resolve_request(messages, params)
+
+        with _wrap_anthropic_errors():
+            async with self._client.messages.stream(
+                model=model,
+                max_tokens=request.max_tokens,
+                system=request.system,
+                messages=request.turns,
+                temperature=request.temperature,
+                top_p=request.top_p,
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield text

@@ -1,6 +1,6 @@
 """Execution node handlers package."""
 
-from nodes.base import NodeExecutionContext, NodeHandler
+from nodes.base import NodeExecutionContext, NodeHandler, OnToken
 from nodes.catalog import build_node_catalog
 from nodes.input import InputNodeHandler
 from nodes.llm import LLMNodeHandler
@@ -14,6 +14,7 @@ __all__ = [
     "NodeExecutionContext",
     "NodeHandler",
     "NodeHandlerRegistry",
+    "OnToken",
     "OutputNodeHandler",
     "WebSearchNodeHandler",
     "build_node_catalog",

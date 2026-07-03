@@ -1,7 +1,9 @@
 """Ollama LLM client."""
 
 import contextlib
-from collections.abc import Iterator
+import json
+from collections.abc import AsyncIterator, Iterator
+from http import HTTPStatus
 
 import httpx
 
@@ -155,3 +157,54 @@ class OllamaClient(BaseLLMClient):
             done=bool(data.get("done", False)),
             raw=data,
         )
+
+    async def stream_chat(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        params: GenerationParams | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream chat completion text deltas from provider.
+
+        Args:
+            model: Model name.
+            messages: Chat messages.
+            params: Optional generation parameters.
+
+        Yields:
+            Text deltas as they arrive.
+
+        Raises:
+            LLMProviderConnectionError: If the provider is unreachable.
+
+        """
+        request_body: dict[str, object] = {
+            "model": model,
+            "messages": [
+                {"role": message.role, "content": message.content}
+                for message in messages
+            ],
+            "stream": True,
+        }
+        options = _build_options(params)
+        if options:
+            request_body["options"] = options
+
+        with _wrap_httpx_errors():
+            async with (
+                httpx.AsyncClient(
+                    base_url=self._base_url, timeout=self._timeout
+                ) as client,
+                client.stream("POST", "/api/chat", json=request_body) as response,
+            ):
+                if response.status_code >= HTTPStatus.BAD_REQUEST:
+                    await response.aread()
+                    response.raise_for_status()
+
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    payload = json.loads(line)
+                    delta = (payload.get("message") or {}).get("content")
+                    if delta:
+                        yield delta

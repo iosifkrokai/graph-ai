@@ -1,5 +1,6 @@
 """Base LLM client protocol."""
 
+from collections.abc import AsyncIterator
 from typing import Protocol
 
 from schemas.llm_provider import (
@@ -23,3 +24,11 @@ class BaseLLMClient(Protocol):
         params: GenerationParams | None = None,
     ) -> ChatResponse:
         """Send chat messages to provider."""
+
+    def stream_chat(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        params: GenerationParams | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream chat completion text deltas from provider."""

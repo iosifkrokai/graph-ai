@@ -1,14 +1,18 @@
 """ARQ worker for background workflow execution."""
 
 import logging
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from arq import cron
 
 from logging_config import configure_logging
 from sessions import async_session
 from settings import redis_settings
+from streaming import publish_token
 from usecases import ExecutionUsecase
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +28,19 @@ async def run_execution_task(ctx: dict[Any, Any], execution_id: int) -> None:
         execution_id: The execution to run.
 
     """
-    del ctx
     logger.info("Running execution %s", execution_id)
+    redis: Redis = ctx["redis"]
+
+    async def token_publisher(exec_id: int, node_id: int, delta: str) -> None:
+        """Publish a node token delta to the execution's stream channel."""
+        await publish_token(redis, exec_id, node_id, delta)
+
     async with async_session() as session:
         await ExecutionUsecase().run_execution(
             session=session,
             execution_id=execution_id,
             session_factory=async_session,
+            token_publisher=token_publisher,
         )
 
 

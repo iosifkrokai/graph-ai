@@ -1,7 +1,7 @@
 """OpenAI-compatible LLM client."""
 
 import contextlib
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 
 import openai
 from openai.types.chat import (
@@ -51,6 +51,27 @@ def _wrap_openai_errors() -> Iterator[None]:
         raise LLMProviderConnectionError(
             message="OpenAI provider is unreachable"
         ) from exc
+
+
+def _temperature(params: GenerationParams | None) -> float | openai.Omit:
+    """Resolve the temperature argument or an omit sentinel."""
+    if params is not None and params.temperature is not None:
+        return params.temperature
+    return openai.omit
+
+
+def _max_tokens(params: GenerationParams | None) -> int | openai.Omit:
+    """Resolve the max_tokens argument or an omit sentinel."""
+    if params is not None and params.max_tokens is not None:
+        return params.max_tokens
+    return openai.omit
+
+
+def _top_p(params: GenerationParams | None) -> float | openai.Omit:
+    """Resolve the top_p argument or an omit sentinel."""
+    if params is not None and params.top_p is not None:
+        return params.top_p
+    return openai.omit
 
 
 def _to_openai_messages(
@@ -144,29 +165,13 @@ class OpenAIClient(BaseLLMClient):
             LLMProviderConnectionError: If the provider is unreachable.
 
         """
-        temperature = (
-            params.temperature
-            if params is not None and params.temperature is not None
-            else openai.omit
-        )
-        max_tokens = (
-            params.max_tokens
-            if params is not None and params.max_tokens is not None
-            else openai.omit
-        )
-        top_p = (
-            params.top_p
-            if params is not None and params.top_p is not None
-            else openai.omit
-        )
-
         with _wrap_openai_errors():
             response = await self._client.chat.completions.create(
                 model=model,
                 messages=_to_openai_messages(messages),
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
+                temperature=_temperature(params),
+                max_tokens=_max_tokens(params),
+                top_p=_top_p(params),
             )
 
         choice = response.choices[0]
@@ -179,3 +184,40 @@ class OpenAIClient(BaseLLMClient):
             done=True,
             raw=response.model_dump(),
         )
+
+    async def stream_chat(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        params: GenerationParams | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream chat completion text deltas from provider.
+
+        Args:
+            model: Model name.
+            messages: Chat messages.
+            params: Optional generation parameters.
+
+        Yields:
+            Text deltas as they arrive.
+
+        Raises:
+            LLMProviderConfigError: If the provider rejects the request.
+            LLMProviderConnectionError: If the provider is unreachable.
+
+        """
+        with _wrap_openai_errors():
+            stream = await self._client.chat.completions.create(
+                model=model,
+                messages=_to_openai_messages(messages),
+                temperature=_temperature(params),
+                max_tokens=_max_tokens(params),
+                top_p=_top_p(params),
+                stream=True,
+            )
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta

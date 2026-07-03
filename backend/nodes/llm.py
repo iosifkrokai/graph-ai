@@ -94,17 +94,24 @@ class LLMNodeHandler:
             raise ExecutionGraphValidationError(message=message)
 
         api_key = decrypt(llm_provider.api_key) if llm_provider.api_key else None
-
-        response = await create_llm_client(
+        client = create_llm_client(
             llm_provider=LLMProviderResponse.model_validate(llm_provider),
             api_key=api_key,
-        ).chat(
-            model=model,
-            messages=[
-                ChatMessage(role="system", content=system_prompt_value),
-                ChatMessage(role="user", content="\n".join(context.parent_values)),
-            ],
-            params=params,
         )
+        messages = [
+            ChatMessage(role="system", content=system_prompt_value),
+            ChatMessage(role="user", content="\n".join(context.parent_values)),
+        ]
 
-        return response.message.content
+        if context.on_token is None:
+            response = await client.chat(model=model, messages=messages, params=params)
+            return response.message.content
+
+        chunks: list[str] = []
+        async for delta in client.stream_chat(
+            model=model, messages=messages, params=params
+        ):
+            chunks.append(delta)
+            await context.on_token(delta)
+
+        return "".join(chunks)

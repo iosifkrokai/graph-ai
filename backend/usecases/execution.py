@@ -1,12 +1,15 @@
 """Execution use case implementation."""
 
 import asyncio
+import contextlib
+import json
 import logging
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from constants import (
@@ -34,7 +37,7 @@ from exceptions import (
     NodeExecutionTimeoutError,
     WorkflowNotFoundError,
 )
-from nodes import NodeExecutionContext, NodeHandlerRegistry
+from nodes import NodeExecutionContext, NodeHandlerRegistry, OnToken
 from schemas import (
     EdgeResponse,
     ExecutionCreate,
@@ -44,8 +47,12 @@ from schemas import (
     NodeExecutionResponse,
     NodeResponse,
 )
+from streaming import subscribe_tokens
 
 logger = logging.getLogger(__name__)
+
+# Publishes a (execution_id, node_id, token delta) for live streaming.
+TokenPublisher = Callable[[int, int, str], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -55,6 +62,7 @@ class _NodeRunContext:
     execution_id: int
     workflow_owner_id: int
     input_value: str
+    token_publisher: TokenPublisher | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +150,7 @@ class ExecutionUsecase:
         session: AsyncSession,
         execution_id: int,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
+        token_publisher: TokenPublisher | None = None,
     ) -> ExecutionResponse:
         """Run a queued execution to completion (worker entry point).
 
@@ -151,6 +160,8 @@ class ExecutionUsecase:
             session_factory: When provided, independent graph branches run
                 concurrently, each node on its own session. When ``None``, nodes
                 run serially on ``session``.
+            token_publisher: When provided, LLM nodes stream token deltas through
+                it for live client streaming.
 
         Returns:
             The finalized execution.
@@ -189,6 +200,7 @@ class ExecutionUsecase:
                 execution_id=execution_id,
                 graph=graph,
                 session_factory=session_factory,
+                token_publisher=token_publisher,
             )
         except BaseError as exc:
             logger.warning("Execution %s failed: %s", execution_id, exc.message)
@@ -371,29 +383,74 @@ class ExecutionUsecase:
         ]
 
     async def stream_execution(
-        self, session: AsyncSession, execution_id: int, user_id: int
+        self,
+        session: AsyncSession,
+        execution_id: int,
+        user_id: int,
+        pool: Redis,
     ) -> AsyncGenerator[str, None]:
-        """Yield SSE ``data:`` frames of an execution's status until terminal.
+        """Stream an execution's status and live LLM tokens as SSE frames.
+
+        Two producers feed one queue: a Redis pub/sub listener for per-node token
+        deltas, and a database poller for status snapshots. The generator drains
+        the queue until the execution reaches a terminal status.
 
         Args:
             session: The session.
             execution_id: The execution ID.
             user_id: The owner user ID.
+            pool: Redis connection for the token pub/sub channel.
 
         Yields:
-            SSE-formatted status frames, ending once the execution is terminal.
+            SSE ``data:`` frames of ``status`` snapshots and ``token`` deltas.
 
         """
-        terminal = {ExecutionStatus.SUCCESS, ExecutionStatus.FAILED}
-        for _ in range(STREAM_MAX_ITERATIONS):
-            session.expire_all()
-            execution = await self.get_execution(
-                session=session, execution_id=execution_id, user_id=user_id
-            )
-            yield f"data: {execution.model_dump_json()}\n\n"
-            if execution.status in terminal:
-                return
-            await asyncio.sleep(STREAM_POLL_SECONDS)
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def pump_tokens() -> None:
+            """Forward published token deltas onto the queue."""
+            async for node_id, delta in subscribe_tokens(pool, execution_id):
+                frame = json.dumps(
+                    {"type": "token", "node_id": node_id, "delta": delta}
+                )
+                await queue.put(f"data: {frame}\n\n")
+
+        async def pump_status() -> None:
+            """Poll status snapshots onto the queue until terminal."""
+            terminal = {ExecutionStatus.SUCCESS, ExecutionStatus.FAILED}
+            for _ in range(STREAM_MAX_ITERATIONS):
+                session.expire_all()
+                execution = await self.get_execution(
+                    session=session, execution_id=execution_id, user_id=user_id
+                )
+                frame = json.dumps(
+                    {"type": "status", "execution": execution.model_dump(mode="json")}
+                )
+                await queue.put(f"data: {frame}\n\n")
+                if execution.status in terminal:
+                    break
+                await asyncio.sleep(STREAM_POLL_SECONDS)
+            await queue.put(None)
+
+        token_task = asyncio.create_task(pump_tokens())
+        status_task = asyncio.create_task(pump_status())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+            while not queue.empty():
+                remaining = queue.get_nowait()
+                if remaining is not None:
+                    yield remaining
+        finally:
+            token_task.cancel()
+            status_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await token_task
+            with contextlib.suppress(asyncio.CancelledError):
+                await status_task
 
     async def _run_execution(
         self,
@@ -401,6 +458,7 @@ class ExecutionUsecase:
         execution_id: int,
         graph: ExecutionGraphContext,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
+        token_publisher: TokenPublisher | None = None,
     ) -> ExecutionOutputPayload:
         """Execute workflow nodes for an execution and return output payload.
 
@@ -409,6 +467,7 @@ class ExecutionUsecase:
             execution_id: Execution ID.
             graph: Validated graph context.
             session_factory: When provided, independent branches run concurrently.
+            token_publisher: When provided, LLM nodes stream token deltas through it.
 
         Returns:
             Output payload.
@@ -438,6 +497,7 @@ class ExecutionUsecase:
             execution_id=execution_id,
             workflow_owner_id=workflow.owner_id,
             input_value=self._extract_input_value(input_data=execution.input_data),
+            token_publisher=token_publisher,
         )
 
         if session_factory is None:
@@ -677,10 +737,35 @@ class ExecutionUsecase:
                         node_data=node.data,
                         parent_values=parent_values,
                         input_value=run_context.input_value,
+                        on_token=self._make_on_token(
+                            run_context=run_context, node_id=node.id
+                        ),
                     ),
                 )
         except TimeoutError as exc:
             raise NodeExecutionTimeoutError from exc
+
+    @staticmethod
+    def _make_on_token(run_context: _NodeRunContext, node_id: int) -> OnToken | None:
+        """Build a per-node token callback bound to the run's publisher.
+
+        Args:
+            run_context: Loop-invariant run context.
+            node_id: The node the tokens belong to.
+
+        Returns:
+            A token callback, or None when streaming is disabled.
+
+        """
+        publisher = run_context.token_publisher
+        if publisher is None:
+            return None
+
+        async def on_token(delta: str) -> None:
+            """Forward one token delta for this node to the publisher."""
+            await publisher(run_context.execution_id, node_id, delta)
+
+        return on_token
 
     async def _record_node_result(
         self,

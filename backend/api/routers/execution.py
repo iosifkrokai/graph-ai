@@ -88,8 +88,9 @@ async def stream_execution(
         Depends(dependency=execution.get_execution_usecase),
     ],
     current_user: Annotated[UserResponse, Depends(dependency=auth.get_current_user)],
+    pool: Annotated[ArqRedis, Depends(dependency=queue.get_arq_pool)],
 ) -> StreamingResponse:
-    """Stream an execution's status as Server-Sent Events until it is terminal."""
+    """Stream execution status and live LLM tokens as Server-Sent Events."""
     # Validate ownership up front so a missing/forbidden execution returns a
     # proper error response instead of failing mid-stream.
     await usecase.get_execution(
@@ -97,7 +98,10 @@ async def stream_execution(
     )
     return StreamingResponse(
         usecase.stream_execution(
-            session=session, execution_id=execution_id, user_id=current_user.id
+            session=session,
+            execution_id=execution_id,
+            user_id=current_user.id,
+            pool=pool,
         ),
         media_type="text/event-stream",
     )
