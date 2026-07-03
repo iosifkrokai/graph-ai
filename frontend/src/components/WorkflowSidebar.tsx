@@ -53,7 +53,7 @@ export function WorkflowSidebar({
   }
 
   return (
-    <aside className="pixel-panel flex h-full flex-col gap-6 overflow-y-auto">
+    <aside className="pixel-panel pixel-scroll flex h-full flex-col gap-6 overflow-y-auto">
       <div>
         <div className="pixel-section-title">Workflows</div>
         <div className="mt-3 flex gap-2">

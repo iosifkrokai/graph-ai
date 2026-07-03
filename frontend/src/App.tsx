@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState } from 'react'
 
-import { AppShell } from './components/AppShell'
+import { AppShell, type ViewMode } from './components/AppShell'
 import { AuthScreen } from './components/AuthScreen'
+import { ChatPanel } from './components/ChatPanel'
 import { CreateNodeDialog } from './components/CreateNodeDialog'
 import { GraphCanvas } from './components/GraphCanvas'
 import { InspectorPanel } from './components/InspectorPanel'
-import { LiveOutput } from './components/LiveOutput'
 import { WorkflowSidebar } from './components/WorkflowSidebar'
 import { useAuthSession } from './hooks/useAuthSession'
 import { useExecutions } from './hooks/useExecutions'
@@ -25,6 +25,7 @@ interface NodeCreateDraft {
 export function App() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState<boolean>(false)
+  const [viewMode, setViewMode] = useState<ViewMode>('build')
   const [nodeCreateDraft, setNodeCreateDraft] = useState<NodeCreateDraft | null>(null)
 
   const {
@@ -89,7 +90,6 @@ export function App() {
     executions,
     lastExecution,
     liveTokens,
-    runInput,
     clearExecutions,
     handleRun,
   } = useExecutions({
@@ -218,43 +218,56 @@ export function App() {
         workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
         executionStatus={lastExecution?.status ?? null}
         error={error}
-        loading={loading}
-        onRun={handleRun}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
         onLogout={handleLogout}
         onDeleteAccount={handleDeleteAccount}
         executions={executions}
-        runInput={runInput}
-        runEnabled={runEnabled}
-        runDisabledReason={runDisabledReason}
         onError={handleError}
       >
-        <WorkflowSidebar
-          workflows={workflows}
-          activeWorkflowId={activeWorkflowId}
-          nodeCatalog={nodeCatalog}
-          onSelectWorkflow={setActiveWorkflowId}
-          onCreateWorkflow={handleCreateWorkflow}
-          onRenameWorkflow={handleRenameWorkflow}
-          onDeleteWorkflow={handleDeleteWorkflow}
-          onAddNode={handleAddNode}
-        />
-        <GraphCanvas
-          nodes={nodes}
-          edges={edges}
-          nodeCatalog={nodeCatalog}
-          onSelectNode={setSelectedNodeId}
-          onNodesChange={handleNodesChange}
-          onMoveNode={handleMoveNode}
-          onConnect={handleConnect}
-          onDeleteEdge={handleDeleteEdge}
-          onDropNode={handleDropNode}
-          onDeleteNode={handleDeleteNode}
-        />
-        <InspectorPanel
-          node={selectedNode}
-          nodeCatalog={nodeCatalog}
-          onSaveNode={handleUpdateNodeData}
-        />
+        {viewMode === 'build' ? (
+          <>
+            <WorkflowSidebar
+              workflows={workflows}
+              activeWorkflowId={activeWorkflowId}
+              nodeCatalog={nodeCatalog}
+              onSelectWorkflow={setActiveWorkflowId}
+              onCreateWorkflow={handleCreateWorkflow}
+              onRenameWorkflow={handleRenameWorkflow}
+              onDeleteWorkflow={handleDeleteWorkflow}
+              onAddNode={handleAddNode}
+            />
+            <GraphCanvas
+              nodes={nodes}
+              edges={edges}
+              nodeCatalog={nodeCatalog}
+              onSelectNode={setSelectedNodeId}
+              onNodesChange={handleNodesChange}
+              onMoveNode={handleMoveNode}
+              onConnect={handleConnect}
+              onDeleteEdge={handleDeleteEdge}
+              onDropNode={handleDropNode}
+              onDeleteNode={handleDeleteNode}
+            />
+            <InspectorPanel
+              node={selectedNode}
+              nodeCatalog={nodeCatalog}
+              onSaveNode={handleUpdateNodeData}
+            />
+          </>
+        ) : (
+          <ChatPanel
+            workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
+            hasWorkflow={activeWorkflowId !== null}
+            executions={executions}
+            liveTokens={liveTokens}
+            lastExecution={lastExecution}
+            runEnabled={runEnabled}
+            runDisabledReason={runDisabledReason}
+            loading={loading}
+            onRun={handleRun}
+          />
+        )}
       </AppShell>
 
       <CreateNodeDialog
@@ -268,8 +281,6 @@ export function App() {
         onCancel={() => setNodeCreateDraft(null)}
         onConfirm={confirmCreateNode}
       />
-
-      <LiveOutput liveTokens={liveTokens} />
     </>
   )
 }

@@ -1,22 +1,20 @@
 import { type ReactNode, useState } from 'react'
 
-import type { ApiError, Execution, RunInputPayload } from '../lib/types'
+import type { ApiError, Execution } from '../lib/types'
 import { ExecutionHistory } from './ExecutionHistory'
 import { ProviderManager } from './ProviderManager'
-import { RunInputModal } from './RunInputModal'
 import { UserMenu } from './UserMenu'
+
+export type ViewMode = 'build' | 'chat'
 
 interface AppShellProps {
   email: string
   workflowName: string
   executionStatus: string | null
   error: string | null
-  loading: boolean
+  viewMode: ViewMode
   executions: Execution[]
-  runInput: RunInputPayload
-  runEnabled: boolean
-  runDisabledReason: string | null
-  onRun: (input: RunInputPayload) => void
+  onViewModeChange: (mode: ViewMode) => void
   onLogout: () => void
   onDeleteAccount: () => void
   onError: (err: ApiError) => void
@@ -28,12 +26,9 @@ export function AppShell({
   workflowName,
   executionStatus,
   error,
-  loading,
+  viewMode,
   executions,
-  runInput,
-  runEnabled,
-  runDisabledReason,
-  onRun,
+  onViewModeChange,
   onLogout,
   onDeleteAccount,
   onError,
@@ -41,7 +36,11 @@ export function AppShell({
 }: AppShellProps) {
   const [showProviders, setShowProviders] = useState(false)
   const [showExecutions, setShowExecutions] = useState(false)
-  const [showRunInput, setShowRunInput] = useState(false)
+
+  const mainClassName =
+    viewMode === 'build'
+      ? 'grid h-[calc(100vh-84px)] grid-cols-[280px_1fr_320px] gap-3 px-4 pt-4 pb-4'
+      : 'mx-auto flex h-[calc(100vh-84px)] w-full max-w-3xl flex-col px-4 pt-4 pb-4'
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">
@@ -52,14 +51,22 @@ export function AppShell({
           </div>
           <div className="truncate text-xs text-[var(--muted)]">/ {workflowName}</div>
         </div>
-        <button
-          type="button"
-          className="pixel-button small justify-self-center"
-          disabled={!runEnabled}
-          onClick={() => setShowRunInput(true)}
-        >
-          Run
-        </button>
+        <div className="flex justify-self-center">
+          <button
+            type="button"
+            className={`pixel-tab ${viewMode === 'build' ? 'is-active' : ''}`}
+            onClick={() => onViewModeChange('build')}
+          >
+            Build
+          </button>
+          <button
+            type="button"
+            className={`pixel-tab ${viewMode === 'chat' ? 'is-active' : ''}`}
+            onClick={() => onViewModeChange('chat')}
+          >
+            Chat
+          </button>
+        </div>
         <div className="flex items-center justify-self-end gap-3">
           {executionStatus ? (
             <div className="pixel-pill">Status: {executionStatus}</div>
@@ -91,19 +98,6 @@ export function AppShell({
           onError={onError}
         />
       ) : null}
-      {showRunInput ? (
-        <RunInputModal
-          initialValue={runInput}
-          loading={loading}
-          canRun={runEnabled}
-          disabledReason={runDisabledReason}
-          onRun={(input) => {
-            onRun(input)
-            setShowRunInput(false)
-          }}
-          onClose={() => setShowRunInput(false)}
-        />
-      ) : null}
       {showExecutions ? (
         <ExecutionHistory
           executions={executions}
@@ -111,9 +105,7 @@ export function AppShell({
         />
       ) : null}
       {error ? <div className="pixel-banner">{error}</div> : null}
-      <main className="grid h-[calc(100vh-84px)] grid-cols-[280px_1fr_320px] gap-3 px-4 pt-4 pb-4">
-        {children}
-      </main>
+      <main className={mainClassName}>{children}</main>
     </div>
   )
 }

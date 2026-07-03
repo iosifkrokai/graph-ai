@@ -8,6 +8,7 @@ import type {
 } from '../lib/types'
 import { useLlmProviders } from '../hooks/useLlmProviders'
 import { useProviderModels } from '../hooks/useProviderModels'
+import { NumberInput } from './NumberInput'
 
 interface CreateNodeDialogProps {
   nodeSpec: NodeCatalogItem | null
@@ -64,14 +65,11 @@ function NumberField({
   onChange: (value: number) => void
 }) {
   return (
-    <input
-      className="pixel-input"
-      type="number"
-      value={Number(value ?? field.default ?? field.validators.ge ?? 0)}
+    <NumberInput
+      displayValue={Number(value ?? field.default ?? field.validators.ge ?? 0)}
       min={field.validators.ge}
       max={field.validators.le}
-      step={0.1}
-      onChange={(event) => onChange(Number(event.target.value))}
+      onChangeRaw={(raw) => onChange(Number(raw))}
     />
   )
 }
@@ -89,18 +87,12 @@ function OptionalNumberField({
     value === null || value === undefined || value === '' ? '' : Number(value)
 
   return (
-    <input
-      className="pixel-input"
-      type="number"
-      value={displayValue}
+    <NumberInput
+      displayValue={displayValue}
       placeholder="default"
       min={field.validators.ge}
       max={field.validators.le}
-      step={0.1}
-      onChange={(event) => {
-        const raw = event.target.value
-        onChange(raw === '' ? null : Number(raw))
-      }}
+      onChangeRaw={(raw) => onChange(raw === '' ? null : Number(raw))}
     />
   )
 }

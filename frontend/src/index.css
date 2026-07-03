@@ -51,6 +51,78 @@ body {
   display: none;
 }
 
+.pixel-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(53, 255, 188, 0.4) transparent;
+}
+
+.pixel-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.pixel-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid rgba(255, 255, 255, 0.06);
+}
+
+.pixel-scroll::-webkit-scrollbar-thumb {
+  background: rgba(53, 255, 188, 0.35);
+  border: 2px solid var(--panel);
+}
+
+.pixel-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(53, 255, 188, 0.6);
+}
+
+.pixel-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.no-spinner {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.pixel-stepper {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  bottom: 2px;
+  display: flex;
+  flex-direction: column;
+  width: 22px;
+}
+
+.pixel-step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: 2px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 0.55rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pixel-step:hover {
+  background: rgba(53, 255, 188, 0.12);
+  color: var(--accent);
+}
+
+.pixel-step + .pixel-step {
+  border-top: 2px solid rgba(255, 255, 255, 0.12);
+}
+
 .pixel-topbar {
   display: flex;
   align-items: center;

@@ -9,6 +9,7 @@ import type {
   NodeCatalogField,
   NodeType,
 } from '../lib/types'
+import { NumberInput } from './NumberInput'
 
 interface InspectorPanelProps {
   node: FlowNode | null
@@ -64,14 +65,11 @@ function NumberField({
   onChange: (value: number) => void
 }) {
   return (
-    <input
-      className="pixel-input"
-      type="number"
-      value={Number(value ?? field.default ?? field.validators.ge ?? 0)}
-      onChange={(event) => onChange(Number(event.target.value))}
+    <NumberInput
+      displayValue={Number(value ?? field.default ?? field.validators.ge ?? 0)}
       min={field.validators.ge}
       max={field.validators.le}
-      step={0.1}
+      onChangeRaw={(raw) => onChange(Number(raw))}
     />
   )
 }
@@ -89,18 +87,12 @@ function OptionalNumberField({
     value === null || value === undefined || value === '' ? '' : Number(value)
 
   return (
-    <input
-      className="pixel-input"
-      type="number"
-      value={displayValue}
+    <NumberInput
+      displayValue={displayValue}
       placeholder="default"
       min={field.validators.ge}
       max={field.validators.le}
-      step={0.1}
-      onChange={(event) => {
-        const raw = event.target.value
-        onChange(raw === '' ? null : Number(raw))
-      }}
+      onChangeRaw={(raw) => onChange(raw === '' ? null : Number(raw))}
     />
   )
 }
@@ -386,7 +378,7 @@ export function InspectorPanel({
   }
 
   return (
-    <aside className="pixel-panel flex h-full flex-col gap-6">
+    <aside className="pixel-panel pixel-scroll flex h-full flex-col gap-6 overflow-y-auto">
       <div>
         <div className="pixel-section-title">Inspector</div>
         {!node ? (
