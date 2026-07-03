@@ -1,32 +1,106 @@
-"""Node handler registry for execution."""
+"""Node registry: the single registration point for node types.
 
-from db.repositories import LLMProviderRepository
+Handlers and the UI catalog are both derived from ``NODE_DEFINITIONS`` — adding a
+node type means declaring a ``NodeDefinition`` next to its handler and adding it to
+this list (plus its ``NodeType`` enum member).
+"""
+
 from enums import NodeType
 from exceptions import ExecutionGraphValidationError
 from nodes.base import NodeExecutionContext, NodeHandler
-from nodes.input import InputNodeHandler
-from nodes.llm import LLMNodeHandler
-from nodes.output import OutputNodeHandler
-from nodes.web_search import WebSearchNodeHandler
+from nodes.definition import NodeDefinition, NodeHandlerDeps, ports_compatible
+from nodes.input import DEFINITION as INPUT_DEFINITION
+from nodes.llm import DEFINITION as LLM_DEFINITION
+from nodes.output import DEFINITION as OUTPUT_DEFINITION
+from nodes.web_search import DEFINITION as WEB_SEARCH_DEFINITION
+from schemas import NodeCatalogItem
+
+NODE_DEFINITIONS: tuple[NodeDefinition, ...] = (
+    INPUT_DEFINITION,
+    LLM_DEFINITION,
+    WEB_SEARCH_DEFINITION,
+    OUTPUT_DEFINITION,
+)
+
+_DEFINITIONS_BY_TYPE: dict[NodeType, NodeDefinition] = {
+    definition.type: definition for definition in NODE_DEFINITIONS
+}
+
+
+def get_node_definition(node_type: NodeType) -> NodeDefinition:
+    """Return the definition for a node type.
+
+    Args:
+        node_type: Node type to look up.
+
+    Returns:
+        The registered node definition.
+
+    Raises:
+        ExecutionGraphValidationError: If the node type is unregistered.
+
+    """
+    definition = _DEFINITIONS_BY_TYPE.get(node_type)
+    if definition is None:
+        message = f"Unsupported node type: {node_type}"
+        raise ExecutionGraphValidationError(message=message)
+    return definition
+
+
+def build_node_catalog() -> dict[NodeType, NodeCatalogItem]:
+    """Build the node catalog (UI metadata) from the registered definitions."""
+    return {
+        definition.type: NodeCatalogItem(
+            type=definition.type,
+            label=definition.label,
+            icon_key=definition.icon_key,
+            graph=definition.graph,
+            fields=definition.fields,
+        )
+        for definition in NODE_DEFINITIONS
+    }
+
+
+def check_edge_ports(source_type: NodeType, target_type: NodeType) -> str | None:
+    """Check whether a source output can feed a target input.
+
+    Args:
+        source_type: Type of the edge's source node.
+        target_type: Type of the edge's target node.
+
+    Returns:
+        A human-readable reason when the connection is invalid, else None.
+
+    """
+    output_port = get_node_definition(source_type).graph.output_port
+    input_port = get_node_definition(target_type).graph.input_port
+
+    if output_port is None:
+        return f"Node type '{source_type.value}' has no output port"
+    if input_port is None:
+        return f"Node type '{target_type.value}' has no input port"
+    if not ports_compatible(output_port, input_port):
+        return (
+            f"Incompatible ports: '{source_type.value}' outputs "
+            f"'{output_port.value}' but '{target_type.value}' expects "
+            f"'{input_port.value}'"
+        )
+    return None
 
 
 class NodeHandlerRegistry:
     """Registry that dispatches execution to node handlers."""
 
-    def __init__(self, llm_provider_repository: LLMProviderRepository) -> None:
-        """Initialize node handler mapping.
+    def __init__(self, deps: NodeHandlerDeps) -> None:
+        """Build the handler map from the registered definitions.
 
         Args:
-            llm_provider_repository: Repository for LLM provider lookups.
+            deps: Shared dependencies passed to each handler factory.
 
         """
         self._handlers: dict[NodeType, NodeHandler] = {
-            NodeType.INPUT: InputNodeHandler(),
-            NodeType.LLM: LLMNodeHandler(
-                llm_provider_repository=llm_provider_repository
-            ),
-            NodeType.WEB_SEARCH: WebSearchNodeHandler(),
-            NodeType.OUTPUT: OutputNodeHandler(),
+            definition.type: definition.build_handler(deps)
+            for definition in NODE_DEFINITIONS
         }
 
     async def execute(

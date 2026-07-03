@@ -12,7 +12,7 @@ from exceptions import (
     NodeNotFoundError,
     WorkflowNotFoundError,
 )
-from nodes.catalog import build_node_catalog
+from nodes import build_node_catalog
 from schemas import (
     NodeCatalogItem,
     NodeCatalogItemResponse,

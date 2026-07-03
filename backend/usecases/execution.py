@@ -37,7 +37,13 @@ from exceptions import (
     NodeExecutionTimeoutError,
     WorkflowNotFoundError,
 )
-from nodes import NodeExecutionContext, NodeHandlerRegistry, OnToken
+from nodes import (
+    NodeExecutionContext,
+    NodeHandlerDeps,
+    NodeHandlerRegistry,
+    OnToken,
+    check_edge_ports,
+)
 from schemas import (
     EdgeResponse,
     ExecutionCreate,
@@ -89,7 +95,7 @@ class ExecutionUsecase:
         self._node_execution_repository = NodeExecutionRepository()
         self._llm_provider_repository = LLMProviderRepository()
         self._node_registry = NodeHandlerRegistry(
-            llm_provider_repository=self._llm_provider_repository
+            NodeHandlerDeps(llm_provider_repository=self._llm_provider_repository)
         )
 
     async def create_execution(
@@ -960,6 +966,12 @@ class ExecutionUsecase:
             if source_id not in nodes_by_id or target_id not in nodes_by_id:
                 message = "Workflow contains edge with missing node reference"
                 raise ExecutionGraphValidationError(message=message)
+
+            port_error = check_edge_ports(
+                nodes_by_id[source_id].type, nodes_by_id[target_id].type
+            )
+            if port_error is not None:
+                raise ExecutionGraphValidationError(message=port_error)
 
             outbound[source_id].append(target_id)
             inbound[target_id].append(source_id)

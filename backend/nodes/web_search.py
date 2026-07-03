@@ -5,8 +5,16 @@ from typing import Any
 import httpx
 
 from constants.timeout import DEFAULT_TIMEOUT
+from enums import NodeType, PortType, ValidatorType
 from exceptions import ExecutionGraphValidationError, WebSearchConnectionError
 from nodes.base import NodeExecutionContext
+from nodes.definition import NodeDefinition, NodeHandlerDeps
+from schemas import (
+    NodeFieldSpec,
+    NodeFieldUI,
+    NodeFieldWidget,
+    NodeGraphSpec,
+)
 
 
 class WebSearchNodeHandler:
@@ -151,3 +159,50 @@ class WebSearchNodeHandler:
         return {
             key: item_value for key, item_value in value.items() if isinstance(key, str)
         }
+
+
+def _build_handler(deps: NodeHandlerDeps) -> WebSearchNodeHandler:
+    """Build a web search node handler."""
+    del deps
+    return WebSearchNodeHandler()
+
+
+DEFINITION = NodeDefinition(
+    type=NodeType.WEB_SEARCH,
+    label="Web Search",
+    icon_key="web_search",
+    graph=NodeGraphSpec(
+        has_input=True,
+        has_output=True,
+        input_port=PortType.TEXT,
+        output_port=PortType.TEXT,
+    ),
+    fields=(
+        NodeFieldSpec(
+            name="label",
+            required=True,
+            validators={ValidatorType.MIN_LENGTH.value: 1},
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.TEXT,
+                label="Label",
+                placeholder="Web search label",
+            ),
+            default="Web Search node",
+        ),
+        NodeFieldSpec(
+            name="max_results",
+            required=True,
+            validators={
+                ValidatorType.GE.value: 1,
+                ValidatorType.LE.value: 10,
+            },
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.NUMBER,
+                label="Max results",
+                help="How many search results to include in output.",
+            ),
+            default=5,
+        ),
+    ),
+    build_handler=_build_handler,
+)

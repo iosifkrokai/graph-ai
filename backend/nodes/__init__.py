@@ -1,21 +1,33 @@
 """Execution node handlers package."""
 
 from nodes.base import NodeExecutionContext, NodeHandler, OnToken
-from nodes.catalog import build_node_catalog
+from nodes.definition import NodeDefinition, NodeHandlerDeps, ports_compatible
 from nodes.input import InputNodeHandler
 from nodes.llm import LLMNodeHandler
 from nodes.output import OutputNodeHandler
-from nodes.registry import NodeHandlerRegistry
+from nodes.registry import (
+    NODE_DEFINITIONS,
+    NodeHandlerRegistry,
+    build_node_catalog,
+    check_edge_ports,
+    get_node_definition,
+)
 from nodes.web_search import WebSearchNodeHandler
 
 __all__ = [
+    "NODE_DEFINITIONS",
     "InputNodeHandler",
     "LLMNodeHandler",
+    "NodeDefinition",
     "NodeExecutionContext",
     "NodeHandler",
+    "NodeHandlerDeps",
     "NodeHandlerRegistry",
     "OnToken",
     "OutputNodeHandler",
     "WebSearchNodeHandler",
     "build_node_catalog",
+    "check_edge_ports",
+    "get_node_definition",
+    "ports_compatible",
 ]

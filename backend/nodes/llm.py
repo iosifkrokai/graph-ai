@@ -3,10 +3,22 @@
 from pydantic import ValidationError
 
 from db.repositories import LLMProviderRepository
+from enums import NodeType, PortType, ValidatorType
 from exceptions import ExecutionGraphValidationError
 from llm import create_llm_client
 from nodes.base import NodeExecutionContext
-from schemas import ChatMessage, GenerationParams, LLMProviderResponse
+from nodes.definition import NodeDefinition, NodeHandlerDeps
+from schemas import (
+    ChatMessage,
+    GenerationParams,
+    LLMProviderResponse,
+    NodeFieldDataSource,
+    NodeFieldDataSourceKind,
+    NodeFieldSpec,
+    NodeFieldUI,
+    NodeFieldWidget,
+    NodeGraphSpec,
+)
 from utils.encryption import decrypt
 
 _GENERATION_PARAM_FIELDS = ("temperature", "max_tokens", "top_p")
@@ -115,3 +127,103 @@ class LLMNodeHandler:
             await context.on_token(delta)
 
         return "".join(chunks)
+
+
+def _build_handler(deps: NodeHandlerDeps) -> LLMNodeHandler:
+    """Build an LLM node handler from shared dependencies."""
+    return LLMNodeHandler(llm_provider_repository=deps.llm_provider_repository)
+
+
+DEFINITION = NodeDefinition(
+    type=NodeType.LLM,
+    label="LLM",
+    icon_key="llm",
+    graph=NodeGraphSpec(
+        has_input=True,
+        has_output=True,
+        input_port=PortType.TEXT,
+        output_port=PortType.TEXT,
+    ),
+    fields=(
+        NodeFieldSpec(
+            name="label",
+            required=True,
+            validators={ValidatorType.MIN_LENGTH.value: 1},
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.TEXT,
+                label="Label",
+                placeholder="LLM label",
+            ),
+            default="LLM node",
+        ),
+        NodeFieldSpec(
+            name="llm_provider_id",
+            required=True,
+            validators={ValidatorType.GE.value: 1},
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.PROVIDER,
+                label="Provider",
+            ),
+            datasource=NodeFieldDataSource(kind=NodeFieldDataSourceKind.LLM_PROVIDER),
+        ),
+        NodeFieldSpec(
+            name="model",
+            required=True,
+            validators={ValidatorType.MIN_LENGTH.value: 1},
+            ui=NodeFieldUI(widget=NodeFieldWidget.MODEL, label="Model"),
+            datasource=NodeFieldDataSource(
+                kind=NodeFieldDataSourceKind.LLM_MODEL,
+                depends_on="llm_provider_id",
+            ),
+            default="",
+        ),
+        NodeFieldSpec(
+            name="system_prompt",
+            required=True,
+            validators={},
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.TEXTAREA,
+                label="System prompt",
+                placeholder="You are a helpful assistant.",
+            ),
+            default="",
+        ),
+        NodeFieldSpec(
+            name="temperature",
+            required=False,
+            validators={
+                ValidatorType.GE.value: 0,
+                ValidatorType.LE.value: 2,
+            },
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.OPTIONAL_NUMBER,
+                label="Temperature",
+                help="Sampling temperature. Leave blank for the provider default.",
+            ),
+        ),
+        NodeFieldSpec(
+            name="max_tokens",
+            required=False,
+            validators={ValidatorType.GE.value: 1},
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.OPTIONAL_NUMBER,
+                label="Max tokens",
+                help="Maximum tokens to generate. Leave blank for the default.",
+            ),
+        ),
+        NodeFieldSpec(
+            name="top_p",
+            required=False,
+            validators={
+                ValidatorType.GE.value: 0,
+                ValidatorType.LE.value: 1,
+            },
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.OPTIONAL_NUMBER,
+                label="Top P",
+                help="Nucleus sampling probability. Leave blank for the default.",
+            ),
+        ),
+    ),
+    build_handler=_build_handler,
+)

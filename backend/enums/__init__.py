@@ -2,7 +2,7 @@
 
 from enums.execution import ExecutionStatus
 from enums.llm_provider import LLMProviderType
-from enums.node import InputNodeFormat, NodeType, OutputNodeFormat
+from enums.node import InputNodeFormat, NodeType, OutputNodeFormat, PortType
 from enums.validator import ValidatorType
 
 __all__ = [
@@ -11,5 +11,6 @@ __all__ = [
     "LLMProviderType",
     "NodeType",
     "OutputNodeFormat",
+    "PortType",
     "ValidatorType",
 ]

@@ -3,12 +3,15 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.repositories import EdgeRepository, NodeRepository, WorkflowRepository
+from enums import NodeType
 from exceptions import (
     EdgeNodeMismatchError,
     EdgeNotFoundError,
+    EdgePortMismatchError,
     NodeNotFoundError,
     WorkflowNotFoundError,
 )
+from nodes import check_edge_ports
 from schemas import EdgeCreate, EdgeResponse, EdgeUpdate
 
 
@@ -41,6 +44,7 @@ class EdgeUsecase:
             WorkflowNotFoundError: If the workflow is not found.
             NodeNotFoundError: If the source or target node is not found.
             EdgeNodeMismatchError: If the nodes do not belong to the workflow.
+            EdgePortMismatchError: If the source/target ports are incompatible.
 
         """
         workflow = await self._workflow_repository.get_by(
@@ -65,6 +69,12 @@ class EdgeUsecase:
             raise EdgeNodeMismatchError
         if target_node.workflow_id != data.workflow_id:
             raise EdgeNodeMismatchError
+
+        port_error = check_edge_ports(
+            NodeType(source_node.type), NodeType(target_node.type)
+        )
+        if port_error is not None:
+            raise EdgePortMismatchError(message=port_error)
 
         return EdgeResponse.model_validate(
             await self._edge_repository.create(session=session, data=data.model_dump())

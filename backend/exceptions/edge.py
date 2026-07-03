@@ -27,3 +27,15 @@ class EdgeNodeMismatchError(BaseError):
     ) -> None:
         """Initialize the error."""
         super().__init__(message=message, status_code=status_code)
+
+
+class EdgePortMismatchError(BaseError):
+    """Raised when a source output port cannot feed a target input port."""
+
+    def __init__(
+        self,
+        message: str = "Incompatible node ports",
+        status_code: HTTPStatus = HTTPStatus.BAD_REQUEST,
+    ) -> None:
+        """Initialize the error."""
+        super().__init__(message=message, status_code=status_code)

@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from enums import NodeType
+from enums import NodeType, PortType
 
 
 class NodeFieldWidget(StrEnum):
@@ -73,6 +73,12 @@ class NodeGraphSpec(BaseModel):
 
     has_input: bool = Field(default=..., description="Whether input handle exists")
     has_output: bool = Field(default=..., description="Whether output handle exists")
+    input_port: PortType | None = Field(
+        default=None, description="Input port data type (None when no input handle)"
+    )
+    output_port: PortType | None = Field(
+        default=None, description="Output port data type (None when no output handle)"
+    )
 
 
 class NodeCatalogItem(BaseModel):
@@ -170,6 +176,8 @@ class NodeCatalogGraphResponse(BaseModel):
 
     has_input: bool = Field(default=..., description="Node has input handle")
     has_output: bool = Field(default=..., description="Node has output handle")
+    input_port: PortType | None = Field(default=None, description="Input port type")
+    output_port: PortType | None = Field(default=None, description="Output port type")
 
 
 class NodeCatalogItemResponse(BaseModel):

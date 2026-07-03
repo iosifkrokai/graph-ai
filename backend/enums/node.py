@@ -12,6 +12,15 @@ class NodeType(StrEnum):
     OUTPUT = auto()
 
 
+class PortType(StrEnum):
+    """Data type carried by a node input/output port."""
+
+    TEXT = auto()
+    JSON = auto()
+    FILE = auto()
+    LIST = auto()
+
+
 class InputNodeFormat(StrEnum):
     """Supported input node formats."""
 
