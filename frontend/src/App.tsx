@@ -5,6 +5,7 @@ import { AuthScreen } from './components/AuthScreen'
 import { CreateNodeDialog } from './components/CreateNodeDialog'
 import { GraphCanvas } from './components/GraphCanvas'
 import { InspectorPanel } from './components/InspectorPanel'
+import { LiveOutput } from './components/LiveOutput'
 import { WorkflowSidebar } from './components/WorkflowSidebar'
 import { useAuthSession } from './hooks/useAuthSession'
 import { useExecutions } from './hooks/useExecutions'
@@ -87,6 +88,7 @@ export function App() {
   const {
     executions,
     lastExecution,
+    liveTokens,
     runInput,
     clearExecutions,
     handleRun,
@@ -266,6 +268,8 @@ export function App() {
         onCancel={() => setNodeCreateDraft(null)}
         onConfirm={confirmCreateNode}
       />
+
+      <LiveOutput liveTokens={liveTokens} />
     </>
   )
 }

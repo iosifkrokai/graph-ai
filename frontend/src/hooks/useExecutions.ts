@@ -19,10 +19,14 @@ interface UseExecutionsParams {
   handleError: (error: ApiError) => void
 }
 
+// Live per-node token text for the execution currently streaming.
+export type LiveTokens = Record<number, string>
+
 interface UseExecutionsResult {
   executions: Execution[]
   executionsLoading: boolean
   lastExecution: Execution | null
+  liveTokens: LiveTokens
   runInput: RunInputPayload
   clearExecutions: () => void
   handleRun: (input: RunInputPayload) => Promise<void>
@@ -40,6 +44,7 @@ export function useExecutions({
   const [executions, setExecutions] = useState<Execution[]>([])
   const [executionsLoading, setExecutionsLoading] = useState<boolean>(false)
   const [lastExecution, setLastExecution] = useState<Execution | null>(null)
+  const [liveTokens, setLiveTokens] = useState<LiveTokens>({})
 
   const refreshExecutions = useCallback(
     async (workflowId: number): Promise<void> => {
@@ -83,10 +88,20 @@ export function useExecutions({
 
     const controller = new AbortController()
     const workflowId = activeWorkflowId
+    setLiveTokens({})
 
     void streamExecution(
       activeExecutionId,
-      (execution) => {
+      (event) => {
+        if (event.type === 'token') {
+          setLiveTokens((previous) => ({
+            ...previous,
+            [event.node_id]: (previous[event.node_id] ?? '') + event.delta,
+          }))
+          return
+        }
+
+        const { execution } = event
         setLastExecution(execution)
         setExecutions((previous) =>
           previous.map((item) =>
@@ -138,6 +153,7 @@ export function useExecutions({
     executions,
     executionsLoading,
     lastExecution,
+    liveTokens,
     runInput,
     clearExecutions,
     handleRun,

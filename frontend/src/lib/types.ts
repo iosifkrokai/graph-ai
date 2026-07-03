@@ -62,6 +62,19 @@ export interface Execution {
   finished_at: string | null
 }
 
+export interface TokenStreamEvent {
+  type: 'token'
+  node_id: number
+  delta: string
+}
+
+export interface StatusStreamEvent {
+  type: 'status'
+  execution: Execution
+}
+
+export type ExecutionStreamEvent = TokenStreamEvent | StatusStreamEvent
+
 export interface UserProfile {
   id: number
   email: string

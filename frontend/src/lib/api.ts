@@ -3,6 +3,7 @@ import type {
   EdgeCreatePayload,
   EdgeResponse,
   Execution,
+  ExecutionStreamEvent,
   LlmModel,
   LlmProvider,
   LlmProviderCreatePayload,
@@ -162,7 +163,7 @@ export async function getExecutions(
 
 export async function streamExecution(
   executionId: number,
-  onExecution: (execution: Execution) => void,
+  onEvent: (event: ExecutionStreamEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {
   const headers: Record<string, string> = {}
@@ -203,7 +204,7 @@ export async function streamExecution(
 
       const payload = dataLine.slice('data:'.length).trim()
       if (payload) {
-        onExecution(JSON.parse(payload) as Execution)
+        onEvent(JSON.parse(payload) as ExecutionStreamEvent)
       }
     }
   }

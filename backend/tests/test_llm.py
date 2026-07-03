@@ -1,5 +1,6 @@
 """LLM client, factory, and generation-parameter tests."""
 
+from collections.abc import AsyncIterator
 from typing import Self, cast
 
 import pytest
@@ -137,6 +138,84 @@ class TestOllamaChat:
         body = cast("dict[str, object]", captured.get("json"))
         if body.get("options") != {"temperature": 0.3}:
             pytest.fail("Options were not forwarded to Ollama")
+
+
+_STREAM_LINES = [
+    '{"message": {"content": "Hel"}}',
+    '{"message": {"content": "lo"}}',
+    "",
+    '{"message": {"content": ""}, "done": true}',
+]
+
+
+class _DummyStreamResponse:
+    """Streamed Ollama response yielding NDJSON lines."""
+
+    status_code = 200
+
+    async def aread(self) -> bytes:
+        """Return an empty body (unused on success)."""
+        return b""
+
+    def raise_for_status(self) -> None:
+        """Keep the successful status."""
+
+    async def aiter_lines(self) -> AsyncIterator[str]:
+        """Yield the fixed NDJSON lines."""
+        for line in _STREAM_LINES:
+            yield line
+
+
+class _DummyStreamCtx:
+    """Async context manager returning the streamed response."""
+
+    async def __aenter__(self) -> _DummyStreamResponse:
+        """Enter and return the response."""
+        return _DummyStreamResponse()
+
+    async def __aexit__(self, *args: object) -> bool:
+        """Exit the context manager."""
+        return False
+
+
+class _DummyStreamingClient:
+    """Async client whose stream() returns fixed NDJSON lines."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Accept any httpx kwargs."""
+
+    async def __aenter__(self) -> Self:
+        """Enter the client context manager."""
+        return self
+
+    async def __aexit__(self, *args: object) -> bool:
+        """Exit the client context manager."""
+        return False
+
+    def stream(self, *args: object, **kwargs: object) -> _DummyStreamCtx:
+        """Return the streaming response context manager."""
+        del args, kwargs
+        return _DummyStreamCtx()
+
+
+class TestOllamaStreamChat:
+    """Tests for streaming Ollama chat deltas."""
+
+    @pytest.mark.asyncio
+    async def test_yields_deltas(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """NDJSON stream lines are parsed into content deltas."""
+        monkeypatch.setattr("llm.ollama.httpx.AsyncClient", _DummyStreamingClient)
+
+        client = OllamaClient(base_url="http://ollama:11434", timeout=1.0)
+        collected = [
+            delta
+            async for delta in client.stream_chat(
+                model="m", messages=[ChatMessage(role="user", content="hi")]
+            )
+        ]
+
+        if collected != ["Hel", "lo"]:
+            pytest.fail("Stream did not yield the expected content deltas")
 
 
 class TestAnthropicSplitSystem:

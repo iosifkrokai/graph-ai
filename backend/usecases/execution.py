@@ -406,34 +406,17 @@ class ExecutionUsecase:
 
         """
         queue: asyncio.Queue[str | None] = asyncio.Queue()
-
-        async def pump_tokens() -> None:
-            """Forward published token deltas onto the queue."""
-            async for node_id, delta in subscribe_tokens(pool, execution_id):
-                frame = json.dumps(
-                    {"type": "token", "node_id": node_id, "delta": delta}
-                )
-                await queue.put(f"data: {frame}\n\n")
-
-        async def pump_status() -> None:
-            """Poll status snapshots onto the queue until terminal."""
-            terminal = {ExecutionStatus.SUCCESS, ExecutionStatus.FAILED}
-            for _ in range(STREAM_MAX_ITERATIONS):
-                session.expire_all()
-                execution = await self.get_execution(
-                    session=session, execution_id=execution_id, user_id=user_id
-                )
-                frame = json.dumps(
-                    {"type": "status", "execution": execution.model_dump(mode="json")}
-                )
-                await queue.put(f"data: {frame}\n\n")
-                if execution.status in terminal:
-                    break
-                await asyncio.sleep(STREAM_POLL_SECONDS)
-            await queue.put(None)
-
-        token_task = asyncio.create_task(pump_tokens())
-        status_task = asyncio.create_task(pump_status())
+        token_task = asyncio.create_task(
+            self._pump_tokens(queue=queue, pool=pool, execution_id=execution_id)
+        )
+        status_task = asyncio.create_task(
+            self._pump_status(
+                queue=queue,
+                session=session,
+                execution_id=execution_id,
+                user_id=user_id,
+            )
+        )
         try:
             while True:
                 item = await queue.get()
@@ -451,6 +434,64 @@ class ExecutionUsecase:
                 await token_task
             with contextlib.suppress(asyncio.CancelledError):
                 await status_task
+
+    @staticmethod
+    async def _pump_tokens(
+        queue: asyncio.Queue[str | None],
+        pool: Redis,
+        execution_id: int,
+    ) -> None:
+        """Forward published token deltas onto the queue (best-effort).
+
+        Args:
+            queue: Destination queue for SSE frames.
+            pool: Redis connection for the token pub/sub channel.
+            execution_id: The execution ID.
+
+        """
+        try:
+            async for node_id, delta in subscribe_tokens(pool, execution_id):
+                frame = json.dumps(
+                    {"type": "token", "node_id": node_id, "delta": delta}
+                )
+                await queue.put(f"data: {frame}\n\n")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Token streaming is best-effort; a pub/sub failure must not break the
+            # status stream, which is the source of truth for completion.
+            logger.exception("Token stream failed for execution %s", execution_id)
+
+    async def _pump_status(
+        self,
+        queue: asyncio.Queue[str | None],
+        session: AsyncSession,
+        execution_id: int,
+        user_id: int,
+    ) -> None:
+        """Poll status snapshots onto the queue until terminal.
+
+        Args:
+            queue: Destination queue for SSE frames.
+            session: The session.
+            execution_id: The execution ID.
+            user_id: The owner user ID.
+
+        """
+        terminal = {ExecutionStatus.SUCCESS, ExecutionStatus.FAILED}
+        for _ in range(STREAM_MAX_ITERATIONS):
+            session.expire_all()
+            execution = await self.get_execution(
+                session=session, execution_id=execution_id, user_id=user_id
+            )
+            frame = json.dumps(
+                {"type": "status", "execution": execution.model_dump(mode="json")}
+            )
+            await queue.put(f"data: {frame}\n\n")
+            if execution.status in terminal:
+                break
+            await asyncio.sleep(STREAM_POLL_SECONDS)
+        await queue.put(None)
 
     async def _run_execution(
         self,

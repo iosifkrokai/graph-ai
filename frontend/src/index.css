@@ -75,6 +75,24 @@ body {
   color: var(--accent-2);
 }
 
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--accent);
+  animation: live-pulse 1s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .pixel-button {
   background: var(--accent);
   color: #04110b;
