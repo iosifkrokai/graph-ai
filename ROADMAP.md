@@ -87,8 +87,13 @@ Unblocks streaming, long pipelines, and scale.
 - [x] Generation params per node: `temperature`, `max_tokens`, `top_p` (`GenerationParams`
       schema, opt-in via the new `optional_number` widget so unset params are omitted — critical
       for Anthropic models that reject `temperature`). Honored by every client.
-- [ ] Token streaming from provider through to the UI (providers stream server-side today;
-      per-token push to the browser is the remaining piece — pairs with Phase 5 Redis pub/sub).
+- [x] Token streaming from provider through to the UI: every client exposes `stream_chat`
+      (`AsyncIterator[str]`); the LLM node forwards each delta via a `NodeExecutionContext.on_token`
+      sink; the worker publishes deltas to the Redis channel `execution:{id}:tokens`
+      (`streaming/tokens.py`); `GET /executions/{id}/stream` multiplexes `token` + `status` SSE
+      frames (`ExecutionUsecase.stream_execution`); the frontend accumulates deltas per node and
+      renders them live (`useExecutions.liveTokens`, `LiveOutput.tsx`). Token streaming is
+      best-effort — a pub/sub failure never breaks the authoritative status stream.
 
 ## Phase 3 — Richer graph & node types (4–6 weeks)
 

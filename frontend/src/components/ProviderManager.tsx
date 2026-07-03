@@ -8,10 +8,54 @@ interface ProviderManagerProps {
   onError: (err: ApiError) => void
 }
 
+type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'openai_compatible'
+
+interface ProviderTypeSpec {
+  label: string
+  defaultBaseUrl: string
+  requiresApiKey: boolean
+}
+
+const PROVIDER_TYPES: Record<ProviderType, ProviderTypeSpec> = {
+  ollama: {
+    label: 'Ollama',
+    defaultBaseUrl: 'http://localhost:11434',
+    requiresApiKey: false,
+  },
+  openai: {
+    label: 'OpenAI',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    requiresApiKey: true,
+  },
+  anthropic: {
+    label: 'Anthropic',
+    defaultBaseUrl: 'https://api.anthropic.com',
+    requiresApiKey: true,
+  },
+  openai_compatible: {
+    label: 'OpenAI-compatible',
+    defaultBaseUrl: '',
+    requiresApiKey: true,
+  },
+}
+
+const PROVIDER_TYPE_ORDER: ProviderType[] = [
+  'ollama',
+  'openai',
+  'anthropic',
+  'openai_compatible',
+]
+
 export function ProviderManager({ onClose, onError }: ProviderManagerProps) {
   const [name, setName] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
+  const [type, setType] = useState<ProviderType>('ollama')
+  const [baseUrl, setBaseUrl] = useState(PROVIDER_TYPES.ollama.defaultBaseUrl)
+  const [baseUrlTouched, setBaseUrlTouched] = useState(false)
+  const [apiKey, setApiKey] = useState('')
   const ref = useRef<HTMLDivElement>(null)
+
+  const spec = PROVIDER_TYPES[type]
+  const apiKeyMissing = spec.requiresApiKey && !apiKey.trim()
   const {
     providers,
     creating,
@@ -31,17 +75,31 @@ export function ProviderManager({ onClose, onError }: ProviderManagerProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [onClose])
 
+  function handleTypeChange(nextType: ProviderType): void {
+    setType(nextType)
+    if (!baseUrlTouched) {
+      setBaseUrl(PROVIDER_TYPES[nextType].defaultBaseUrl)
+    }
+    if (!PROVIDER_TYPES[nextType].requiresApiKey) {
+      setApiKey('')
+    }
+  }
+
   async function handleCreate(): Promise<void> {
     try {
       const created = await createProvider({
         name: name.trim(),
-        type: 'ollama',
+        type,
         base_url: baseUrl.trim(),
         config: {},
+        api_key: spec.requiresApiKey ? apiKey.trim() : null,
       })
       if (created) {
         setName('')
-        setBaseUrl('')
+        setType('ollama')
+        setBaseUrl(PROVIDER_TYPES.ollama.defaultBaseUrl)
+        setBaseUrlTouched(false)
+        setApiKey('')
       }
     } catch (error) {
       onError(error as ApiError)
@@ -106,22 +164,52 @@ export function ProviderManager({ onClose, onError }: ProviderManagerProps) {
                 className="pixel-input"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="My Ollama"
+                placeholder="My Provider"
               />
+            </label>
+            <label className="pixel-label">
+              Type
+              <select
+                className="pixel-input"
+                value={type}
+                onChange={(e) => handleTypeChange(e.target.value as ProviderType)}
+              >
+                {PROVIDER_TYPE_ORDER.map((option) => (
+                  <option key={option} value={option}>
+                    {PROVIDER_TYPES[option].label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="pixel-label">
               Base URL
               <input
                 className="pixel-input"
                 value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="http://localhost:11434"
+                onChange={(e) => {
+                  setBaseUrl(e.target.value)
+                  setBaseUrlTouched(true)
+                }}
+                placeholder={spec.defaultBaseUrl || 'https://api.example.com/v1'}
               />
             </label>
+            {spec.requiresApiKey ? (
+              <label className="pixel-label">
+                API Key
+                <input
+                  className="pixel-input"
+                  type="password"
+                  value={apiKey}
+                  autoComplete="off"
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="sk-..."
+                />
+              </label>
+            ) : null}
             <button
               type="button"
               className="pixel-button small"
-              disabled={creating || !name.trim() || !baseUrl.trim()}
+              disabled={creating || !name.trim() || !baseUrl.trim() || apiKeyMissing}
               onClick={() => void handleCreate()}
             >
               {creating ? 'Saving...' : 'Add Provider'}
