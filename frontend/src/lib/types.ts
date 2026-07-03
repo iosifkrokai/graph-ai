@@ -85,6 +85,7 @@ export type NodeFieldWidget =
   | 'text'
   | 'textarea'
   | 'number'
+  | 'optional_number'
   | 'select'
   | 'provider'
   | 'model'

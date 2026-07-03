@@ -14,6 +14,7 @@ from schemas.health import HealthResponse, ServiceHealthResponse
 from schemas.llm_provider import (
     ChatMessage,
     ChatResponse,
+    GenerationParams,
     LLMProviderCreate,
     LLMProviderModelResponse,
     LLMProviderResponse,
@@ -50,6 +51,7 @@ __all__ = [
     "ExecutionInputPayload",
     "ExecutionOutputPayload",
     "ExecutionResponse",
+    "GenerationParams",
     "HealthResponse",
     "LLMModel",
     "LLMProviderCreate",

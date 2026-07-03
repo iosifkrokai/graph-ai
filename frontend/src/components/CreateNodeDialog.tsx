@@ -76,6 +76,35 @@ function NumberField({
   )
 }
 
+function OptionalNumberField({
+  field,
+  value,
+  onChange,
+}: {
+  field: NodeCatalogField
+  value: unknown
+  onChange: (value: number | null) => void
+}) {
+  const displayValue =
+    value === null || value === undefined || value === '' ? '' : Number(value)
+
+  return (
+    <input
+      className="pixel-input"
+      type="number"
+      value={displayValue}
+      placeholder="default"
+      min={field.validators.ge}
+      max={field.validators.le}
+      step={0.1}
+      onChange={(event) => {
+        const raw = event.target.value
+        onChange(raw === '' ? null : Number(raw))
+      }}
+    />
+  )
+}
+
 function SelectField({
   value,
   options,
@@ -213,7 +242,7 @@ export function CreateNodeDialog({
     return nextErrors
   }, [data, fields])
 
-  function updateField(name: string, value: string | number) {
+  function updateField(name: string, value: string | number | null) {
     setData((previous) => ({ ...previous, [name]: value }))
     setErrors((previous) => {
       if (!(name in previous)) {
@@ -264,6 +293,16 @@ export function CreateNodeDialog({
     if (field.ui.widget === 'number') {
       return (
         <NumberField
+          field={field}
+          value={value}
+          onChange={(numberValue) => updateField(field.name, numberValue)}
+        />
+      )
+    }
+
+    if (field.ui.widget === 'optional_number') {
+      return (
+        <OptionalNumberField
           field={field}
           value={value}
           onChange={(numberValue) => updateField(field.name, numberValue)}

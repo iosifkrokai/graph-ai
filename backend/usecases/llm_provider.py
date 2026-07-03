@@ -1,10 +1,9 @@
 """LLM provider use case implementation."""
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.repositories import LLMProviderRepository
-from exceptions import LLMProviderConnectionError, LLMProviderNotFoundError
+from exceptions import LLMProviderNotFoundError
 from llm import create_llm_client
 from schemas import (
     LLMProviderCreate,
@@ -12,7 +11,7 @@ from schemas import (
     LLMProviderResponse,
     LLMProviderUpdate,
 )
-from utils.encryption import encrypt
+from utils.encryption import decrypt, encrypt
 
 
 class LLMProviderUsecase:
@@ -172,25 +171,20 @@ class LLMProviderUsecase:
 
         Raises:
             LLMProviderNotFoundError: If the provider is not found.
+            LLMProviderConfigError: If the provider configuration is invalid.
             LLMProviderConnectionError: If the provider is unreachable.
             UnsupportedLLMProviderError: If the provider type is unsupported.
 
         """
-        llm_provider = await self.get_llm_provider(
-            session=session, provider_id=provider_id, user_id=user_id
+        llm_provider = await self._llm_provider_repository.get_by(
+            session=session, id=provider_id, user_id=user_id
         )
+        if not llm_provider:
+            raise LLMProviderNotFoundError
 
-        try:
-            return await create_llm_client(llm_provider=llm_provider).list_models()
-        except httpx.TimeoutException as exc:
-            raise LLMProviderConnectionError(
-                message="LLM provider request timed out while listing models"
-            ) from exc
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text.strip()
-            message = f"LLM provider returned {exc.response.status_code}"
-            if detail:
-                message = f"{message}: {detail[:300]}"
-            raise LLMProviderConnectionError(message=message) from exc
-        except httpx.HTTPError as exc:
-            raise LLMProviderConnectionError from exc
+        api_key = decrypt(llm_provider.api_key) if llm_provider.api_key else None
+
+        return await create_llm_client(
+            llm_provider=LLMProviderResponse.model_validate(llm_provider),
+            api_key=api_key,
+        ).list_models()

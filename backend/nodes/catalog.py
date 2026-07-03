@@ -79,6 +79,42 @@ def build_node_catalog() -> dict[NodeType, NodeCatalogItem]:
             ),
             default="",
         ),
+        NodeFieldSpec(
+            name="temperature",
+            required=False,
+            validators={
+                ValidatorType.GE.value: 0,
+                ValidatorType.LE.value: 2,
+            },
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.OPTIONAL_NUMBER,
+                label="Temperature",
+                help="Sampling temperature. Leave blank for the provider default.",
+            ),
+        ),
+        NodeFieldSpec(
+            name="max_tokens",
+            required=False,
+            validators={ValidatorType.GE.value: 1},
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.OPTIONAL_NUMBER,
+                label="Max tokens",
+                help="Maximum tokens to generate. Leave blank for the default.",
+            ),
+        ),
+        NodeFieldSpec(
+            name="top_p",
+            required=False,
+            validators={
+                ValidatorType.GE.value: 0,
+                ValidatorType.LE.value: 1,
+            },
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.OPTIONAL_NUMBER,
+                label="Top P",
+                help="Nucleus sampling probability. Leave blank for the default.",
+            ),
+        ),
     )
 
     output_fields = (

@@ -25,6 +25,22 @@ class ChatResponse(BaseModel):
     raw: dict[str, object] = Field(default_factory=dict, description="Raw payload")
 
 
+class GenerationParams(BaseModel):
+    """Optional generation parameters for an LLM chat request."""
+
+    model_config = ConfigDict(frozen=True)
+
+    temperature: float | None = Field(
+        default=None, ge=0.0, le=2.0, description="Sampling temperature"
+    )
+    max_tokens: int | None = Field(
+        default=None, gt=0, description="Maximum tokens to generate"
+    )
+    top_p: float | None = Field(
+        default=None, gt=0.0, le=1.0, description="Nucleus sampling probability"
+    )
+
+
 class LLMProviderCreate(BaseModel):
     """Payload for creating an LLM provider."""
 

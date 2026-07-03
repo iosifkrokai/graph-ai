@@ -1,0 +1,4 @@
+"""LLM client constants."""
+
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
+DEFAULT_ANTHROPIC_MAX_TOKENS = 4096

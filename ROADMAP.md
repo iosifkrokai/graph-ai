@@ -78,12 +78,17 @@ Unblocks streaming, long pipelines, and scale.
       fail-fast) + encrypted, write-only `LLMProvider.api_key` (migration `709163b05319`);
       the key is never returned in any response. `config` stays for non-secret settings —
       secrets belong in `api_key`.
-- [ ] OpenAI / Anthropic / OpenAI-compatible clients (the `BaseLLMClient` protocol is ready;
-      needs an enum value + factory branch in `llm/__init__.py`; decrypt `api_key` at client
-      construction). Anthropic client should use the official `anthropic` SDK, default model
-      `claude-opus-4-8`.
-- [ ] Generation params per node: `temperature`, `max_tokens`, `top_p`.
-- [ ] Token streaming from provider through to the UI.
+- [x] OpenAI / Anthropic / OpenAI-compatible clients (`llm/openai.py`, `llm/anthropic.py`;
+      enum values `OPENAI`/`ANTHROPIC`/`OPENAI_COMPATIBLE`; `create_llm_client(provider, api_key)`
+      decrypts `api_key` at construction and requires it for cloud providers). Anthropic uses the
+      official `anthropic` SDK (streaming + `get_final_message`), default model `claude-opus-4-8`.
+      Each client wraps SDK errors into domain `LLMProviderConnectionError` (retryable) /
+      `LLMProviderConfigError` (non-retryable, e.g. bad key).
+- [x] Generation params per node: `temperature`, `max_tokens`, `top_p` (`GenerationParams`
+      schema, opt-in via the new `optional_number` widget so unset params are omitted — critical
+      for Anthropic models that reject `temperature`). Honored by every client.
+- [ ] Token streaming from provider through to the UI (providers stream server-side today;
+      per-token push to the browser is the remaining piece — pairs with Phase 5 Redis pub/sub).
 
 ## Phase 3 — Richer graph & node types (4–6 weeks)
 

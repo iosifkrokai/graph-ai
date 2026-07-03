@@ -1,9 +1,66 @@
 """Ollama LLM client."""
 
+import contextlib
+from collections.abc import Iterator
+
 import httpx
 
+from exceptions import LLMProviderConnectionError
 from llm.base import BaseLLMClient
-from schemas.llm_provider import ChatMessage, ChatResponse, LLMProviderModelResponse
+from schemas.llm_provider import (
+    ChatMessage,
+    ChatResponse,
+    GenerationParams,
+    LLMProviderModelResponse,
+)
+
+
+@contextlib.contextmanager
+def _wrap_httpx_errors() -> Iterator[None]:
+    """Translate httpx transport errors into a domain connection error.
+
+    Yields:
+        Control to the wrapped request block.
+
+    Raises:
+        LLMProviderConnectionError: If an httpx error is raised.
+
+    """
+    try:
+        yield
+    except httpx.TimeoutException as exc:
+        raise LLMProviderConnectionError(message="Ollama request timed out") from exc
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text.strip()
+        message = f"Ollama returned {exc.response.status_code}"
+        if detail:
+            message = f"{message}: {detail[:300]}"
+        raise LLMProviderConnectionError(message=message) from exc
+    except httpx.HTTPError as exc:
+        raise LLMProviderConnectionError from exc
+
+
+def _build_options(params: GenerationParams | None) -> dict[str, float | int]:
+    """Translate generation params into Ollama option fields.
+
+    Args:
+        params: Optional generation parameters.
+
+    Returns:
+        Ollama options payload, empty when no params are set.
+
+    """
+    if params is None:
+        return {}
+
+    options: dict[str, float | int] = {}
+    if params.temperature is not None:
+        options["temperature"] = params.temperature
+    if params.max_tokens is not None:
+        options["num_predict"] = params.max_tokens
+    if params.top_p is not None:
+        options["top_p"] = params.top_p
+    return options
 
 
 class OllamaClient(BaseLLMClient):
@@ -19,7 +76,6 @@ class OllamaClient(BaseLLMClient):
         Args:
             base_url: Base URL for the Ollama server.
             timeout: Request timeout in seconds.
-            transport: Optional transport for testing.
 
         """
         self._base_url = base_url
@@ -31,46 +87,62 @@ class OllamaClient(BaseLLMClient):
         Returns:
             Model metadata list.
 
+        Raises:
+            LLMProviderConnectionError: If the provider is unreachable.
+
         """
-        async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=self._timeout
-        ) as client:
-            response = await client.get(url="/api/tags")
-            response.raise_for_status()
-            payload = response.json()
+        with _wrap_httpx_errors():
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=self._timeout
+            ) as client:
+                response = await client.get(url="/api/tags")
+                response.raise_for_status()
+                payload = response.json()
 
         return [
             LLMProviderModelResponse(name=model["name"])
             for model in payload.get("models", [])
         ]
 
-    async def chat(self, model: str, messages: list[ChatMessage]) -> ChatResponse:
+    async def chat(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        params: GenerationParams | None = None,
+    ) -> ChatResponse:
         """Send chat messages to provider.
 
         Args:
             model: Model name.
             messages: Chat messages.
+            params: Optional generation parameters.
 
         Returns:
             Chat response payload.
 
+        Raises:
+            LLMProviderConnectionError: If the provider is unreachable.
+
         """
-        async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=self._timeout
-        ) as client:
-            response = await client.post(
-                url="/api/chat",
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": message.role, "content": message.content}
-                        for message in messages
-                    ],
-                    "stream": False,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
+        request_body: dict[str, object] = {
+            "model": model,
+            "messages": [
+                {"role": message.role, "content": message.content}
+                for message in messages
+            ],
+            "stream": False,
+        }
+        options = _build_options(params)
+        if options:
+            request_body["options"] = options
+
+        with _wrap_httpx_errors():
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=self._timeout
+            ) as client:
+                response = await client.post(url="/api/chat", json=request_body)
+                response.raise_for_status()
+                data = response.json()
 
         message_data = data.get("message") or {}
 

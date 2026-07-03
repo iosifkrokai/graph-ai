@@ -1,12 +1,45 @@
 """LLM node handler."""
 
-import httpx
+from pydantic import ValidationError
 
 from db.repositories import LLMProviderRepository
-from exceptions import ExecutionGraphValidationError, LLMProviderConnectionError
+from exceptions import ExecutionGraphValidationError
 from llm import create_llm_client
 from nodes.base import NodeExecutionContext
-from schemas import ChatMessage, LLMProviderResponse
+from schemas import ChatMessage, GenerationParams, LLMProviderResponse
+from utils.encryption import decrypt
+
+_GENERATION_PARAM_FIELDS = ("temperature", "max_tokens", "top_p")
+
+
+def _build_generation_params(
+    node_data: dict[str, object],
+) -> GenerationParams | None:
+    """Build generation params from node data.
+
+    Args:
+        node_data: Raw node configuration.
+
+    Returns:
+        Parsed generation params, or None when none are configured.
+
+    Raises:
+        ExecutionGraphValidationError: If a configured value is invalid.
+
+    """
+    provided = {
+        field: node_data[field]
+        for field in _GENERATION_PARAM_FIELDS
+        if node_data.get(field) is not None
+    }
+    if not provided:
+        return None
+
+    try:
+        return GenerationParams.model_validate(provided)
+    except ValidationError as exc:
+        message = "LLM node has invalid generation parameters"
+        raise ExecutionGraphValidationError(message=message) from exc
 
 
 class LLMNodeHandler:
@@ -49,6 +82,8 @@ class LLMNodeHandler:
             message = "LLM node field system_prompt must be a string"
             raise ExecutionGraphValidationError(message=message)
 
+        params = _build_generation_params(context.node_data)
+
         llm_provider = await self._llm_provider_repository.get_by(
             session=context.session,
             id=llm_provider_id,
@@ -58,27 +93,18 @@ class LLMNodeHandler:
             message = "Referenced LLM provider does not exist"
             raise ExecutionGraphValidationError(message=message)
 
-        try:
-            response = await create_llm_client(
-                llm_provider=LLMProviderResponse.model_validate(llm_provider)
-            ).chat(
-                model=model,
-                messages=[
-                    ChatMessage(role="system", content=system_prompt_value),
-                    ChatMessage(role="user", content="\n".join(context.parent_values)),
-                ],
-            )
-        except httpx.TimeoutException as exc:
-            raise LLMProviderConnectionError(
-                message="LLM provider request timed out while running execution"
-            ) from exc
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text.strip()
-            message = f"LLM provider returned {exc.response.status_code}"
-            if detail:
-                message = f"{message}: {detail[:300]}"
-            raise LLMProviderConnectionError(message=message) from exc
-        except httpx.HTTPError as exc:
-            raise LLMProviderConnectionError from exc
+        api_key = decrypt(llm_provider.api_key) if llm_provider.api_key else None
+
+        response = await create_llm_client(
+            llm_provider=LLMProviderResponse.model_validate(llm_provider),
+            api_key=api_key,
+        ).chat(
+            model=model,
+            messages=[
+                ChatMessage(role="system", content=system_prompt_value),
+                ChatMessage(role="user", content="\n".join(context.parent_values)),
+            ],
+            params=params,
+        )
 
         return response.message.content

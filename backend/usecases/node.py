@@ -61,6 +61,9 @@ class NodeUsecase:
             errors: Error collector.
 
         """
+        if value is None and not field.required:
+            return
+
         validators = field.validators
 
         if ValidatorType.MIN_LENGTH.value in validators and (

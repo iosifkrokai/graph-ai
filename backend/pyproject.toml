@@ -17,6 +17,8 @@ dependencies = [
     "bcrypt==4.3.0",
     "arq==0.28.0",
     "cryptography==49.0.0",
+    "openai==2.44.0",
+    "anthropic==0.116.0",
 ]
 
 [dependency-groups]

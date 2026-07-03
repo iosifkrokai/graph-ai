@@ -5,6 +5,10 @@ from constants.execution import (
     STREAM_POLL_SECONDS,
     STUCK_EXECUTION_TIMEOUT_SECONDS,
 )
+from constants.llm import (
+    DEFAULT_ANTHROPIC_MAX_TOKENS,
+    DEFAULT_ANTHROPIC_MODEL,
+)
 from constants.retry import (
     MAX_NODE_ATTEMPTS,
     NODE_TIMEOUT_SECONDS,
@@ -13,6 +17,8 @@ from constants.retry import (
 from constants.timeout import DEFAULT_TIMEOUT
 
 __all__ = [
+    "DEFAULT_ANTHROPIC_MAX_TOKENS",
+    "DEFAULT_ANTHROPIC_MODEL",
     "DEFAULT_TIMEOUT",
     "MAX_NODE_ATTEMPTS",
     "NODE_TIMEOUT_SECONDS",

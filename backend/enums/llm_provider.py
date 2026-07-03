@@ -7,3 +7,6 @@ class LLMProviderType(StrEnum):
     """Supported large language model providers."""
 
     OLLAMA = auto()
+    OPENAI = auto()
+    ANTHROPIC = auto()
+    OPENAI_COMPATIBLE = auto()

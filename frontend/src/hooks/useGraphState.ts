@@ -97,6 +97,11 @@ function buildDefaultData(catalogNode: NodeCatalogItem): Record<string, unknown>
   const data: Record<string, unknown> = {}
 
   for (const field of catalogNode.fields) {
+    if (field.ui.widget === 'optional_number') {
+      data[field.name] = null
+      continue
+    }
+
     if (field.default !== null && field.default !== undefined) {
       data[field.name] = field.default
       continue

@@ -14,6 +14,7 @@ class NodeFieldWidget(StrEnum):
     TEXT = "text"
     TEXTAREA = "textarea"
     NUMBER = "number"
+    OPTIONAL_NUMBER = "optional_number"
     SELECT = "select"
     PROVIDER = "provider"
     MODEL = "model"
