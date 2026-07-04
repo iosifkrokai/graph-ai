@@ -2,7 +2,7 @@
 
 from enums import NodeType, PortType, ValidatorType
 from exceptions import ExecutionGraphValidationError
-from nodes.base import NodeExecutionContext
+from nodes.base import NodeExecutionContext, NodeExecutionResult
 from nodes.definition import NodeDefinition, NodeHandlerDeps
 from nodes.rendering import render_input
 from schemas import (
@@ -16,7 +16,7 @@ from schemas import (
 class TemplateNodeHandler:
     """Handler for prompt/template nodes."""
 
-    async def execute(self, context: NodeExecutionContext) -> str:
+    async def execute(self, context: NodeExecutionContext) -> NodeExecutionResult:
         """Render the template, substituting upstream text for the placeholder.
 
         Args:
@@ -34,7 +34,7 @@ class TemplateNodeHandler:
             message = "Template node requires a non-empty template"
             raise ExecutionGraphValidationError(message=message)
 
-        return render_input(template, context)
+        return NodeExecutionResult(output=render_input(template, context))
 
 
 def _build_handler(deps: NodeHandlerDeps) -> TemplateNodeHandler:

@@ -39,3 +39,15 @@ class EdgePortMismatchError(BaseError):
     ) -> None:
         """Initialize the error."""
         super().__init__(message=message, status_code=status_code)
+
+
+class EdgeHandleMismatchError(BaseError):
+    """Raised when an edge's source_handle doesn't match the source node's output."""
+
+    def __init__(
+        self,
+        message: str = "Invalid source handle for this node type",
+        status_code: HTTPStatus = HTTPStatus.BAD_REQUEST,
+    ) -> None:
+        """Initialize the error."""
+        super().__init__(message=message, status_code=status_code)

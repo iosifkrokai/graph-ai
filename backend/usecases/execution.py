@@ -46,6 +46,7 @@ from exceptions import (
 )
 from nodes import (
     NodeExecutionContext,
+    NodeExecutionResult,
     NodeHandlerDeps,
     NodeHandlerRegistry,
     OnToken,
@@ -86,6 +87,17 @@ class _NodeOutcome:
     status: ExecutionStatus
     output: str | None = None
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class _Adjacency:
+    """Sorted graph adjacency, with per-edge source handles, plus indegree."""
+
+    outbound: dict[int, list[int]]
+    inbound: dict[int, list[int]]
+    outbound_edges: dict[int, list[tuple[int, str | None]]]
+    inbound_edges: dict[int, list[tuple[int, str | None]]]
+    indegree: dict[int, int]
 
 
 class ExecutionUsecase:
@@ -753,6 +765,100 @@ class ExecutionUsecase:
 
         return ExecutionOutputPayload(value=outputs_by_node[graph.output_node_id])
 
+    def _resolve_live_parents(
+        self,
+        node_id: int,
+        graph: ExecutionGraphContext,
+        outputs_by_node: dict[int, str],
+        live_by_node: dict[int, bool],
+        selected_handle_by_node: dict[int, str | None],
+    ) -> tuple[list[str], bool]:
+        """Gather live parent outputs for a node and whether it should run.
+
+        A parent edge is live when its source node itself ran (not skipped)
+        and, for branching nodes (e.g. Condition), the edge's handle matches
+        the branch the source node selected. A node with zero live inbound
+        edges is skipped rather than executed.
+
+        Args:
+            node_id: Node whose inputs are being resolved.
+            graph: Validated graph context.
+            outputs_by_node: Outputs recorded so far.
+            live_by_node: Whether each already-resolved node ran (vs skipped).
+            selected_handle_by_node: Branch handle selected by each node, if any.
+
+        Returns:
+            The live parent outputs (in deterministic parent-id order), and
+            whether the node has at least one live inbound edge.
+
+        """
+        live_outputs: list[str] = []
+        for parent_id, handle in graph.inbound_edges[node_id]:
+            if not live_by_node.get(parent_id, False):
+                continue
+            if handle is not None and handle != selected_handle_by_node.get(parent_id):
+                continue
+            live_outputs.append(outputs_by_node[parent_id])
+        return live_outputs, bool(live_outputs)
+
+    async def _record_skip(
+        self,
+        session: AsyncSession,
+        run_context: _NodeRunContext,
+        node_id: int,
+    ) -> None:
+        """Persist a SKIPPED result for a node with no live inbound edge.
+
+        Args:
+            session: Database session to record the result on.
+            run_context: Loop-invariant run context.
+            node_id: The skipped node's ID.
+
+        """
+        await self._record_node_result(
+            session=session,
+            run_context=run_context,
+            node_id=node_id,
+            started_at=datetime.now(tz=UTC).replace(tzinfo=None),
+            outcome=_NodeOutcome(status=ExecutionStatus.SKIPPED),
+        )
+
+    async def _record_skip_isolated(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        run_context: _NodeRunContext,
+        node_id: int,
+    ) -> None:
+        """Persist a SKIPPED result for a node on a dedicated session.
+
+        Args:
+            session_factory: Factory for the node's own session.
+            run_context: Loop-invariant run context.
+            node_id: The skipped node's ID.
+
+        """
+        async with session_factory() as skip_session:
+            await self._record_skip(
+                session=skip_session, run_context=run_context, node_id=node_id
+            )
+
+    def _raise_if_output_not_live(
+        self, graph: ExecutionGraphContext, live_by_node: dict[int, bool]
+    ) -> None:
+        """Fail the run when no live branch ever reached the output node.
+
+        Args:
+            graph: Validated graph context.
+            live_by_node: Whether each node ran (vs was skipped).
+
+        Raises:
+            ExecutionGraphValidationError: If the output node was skipped.
+
+        """
+        if not live_by_node.get(graph.output_node_id, False):
+            message = "No live path reached the output node"
+            raise ExecutionGraphValidationError(message=message)
+
     async def _run_nodes_serial(
         self,
         session: AsyncSession,
@@ -771,18 +877,43 @@ class ExecutionUsecase:
 
         """
         outputs_by_node: dict[int, str] = {}
+        live_by_node: dict[int, bool] = {}
+        selected_handle_by_node: dict[int, str | None] = {}
+
         for node_id in graph.topological_order:
             node = graph.nodes_by_id[node_id]
-            parent_values = [
-                outputs_by_node[parent_id] for parent_id in graph.inbound[node_id]
-            ]
-            outputs_by_node[node_id] = await self._run_node(
+
+            if node_id == graph.input_node_id:
+                parent_values: list[str] = []
+                is_live = True
+            else:
+                parent_values, is_live = self._resolve_live_parents(
+                    node_id=node_id,
+                    graph=graph,
+                    outputs_by_node=outputs_by_node,
+                    live_by_node=live_by_node,
+                    selected_handle_by_node=selected_handle_by_node,
+                )
+
+            if not is_live:
+                live_by_node[node_id] = False
+                selected_handle_by_node[node_id] = None
+                await self._record_skip(
+                    session=session, run_context=run_context, node_id=node_id
+                )
+                continue
+
+            result = await self._run_node(
                 session=session,
                 run_context=run_context,
                 node=node,
                 parent_values=parent_values,
             )
+            outputs_by_node[node_id] = result.output
+            live_by_node[node_id] = True
+            selected_handle_by_node[node_id] = result.selected_handle
 
+        self._raise_if_output_not_live(graph=graph, live_by_node=live_by_node)
         return outputs_by_node
 
     async def _run_nodes_parallel(
@@ -812,29 +943,57 @@ class ExecutionUsecase:
             node_id: len(graph.inbound[node_id]) for node_id in graph.nodes_by_id
         }
         outputs_by_node: dict[int, str] = {}
+        live_by_node: dict[int, bool] = {}
+        selected_handle_by_node: dict[int, str | None] = {}
         ready = [node_id for node_id, degree in indegree.items() if degree == 0]
 
         while ready:
+            runnable: list[int] = []
+            parent_values_by_node: dict[int, list[str]] = {}
+            for node_id in ready:
+                if node_id == graph.input_node_id:
+                    parent_values_by_node[node_id] = []
+                    runnable.append(node_id)
+                    continue
+
+                parent_values, is_live = self._resolve_live_parents(
+                    node_id=node_id,
+                    graph=graph,
+                    outputs_by_node=outputs_by_node,
+                    live_by_node=live_by_node,
+                    selected_handle_by_node=selected_handle_by_node,
+                )
+                if is_live:
+                    parent_values_by_node[node_id] = parent_values
+                    runnable.append(node_id)
+                else:
+                    live_by_node[node_id] = False
+                    selected_handle_by_node[node_id] = None
+                    await self._record_skip_isolated(
+                        session_factory=session_factory,
+                        run_context=run_context,
+                        node_id=node_id,
+                    )
+
             wave_results = await asyncio.gather(
                 *(
                     self._run_node_isolated(
                         session_factory=session_factory,
                         run_context=run_context,
                         node=graph.nodes_by_id[node_id],
-                        parent_values=[
-                            outputs_by_node[parent_id]
-                            for parent_id in graph.inbound[node_id]
-                        ],
+                        parent_values=parent_values_by_node[node_id],
                     )
-                    for node_id in ready
+                    for node_id in runnable
                 ),
                 return_exceptions=True,
             )
             for result in wave_results:
                 if isinstance(result, BaseException):
                     raise result
-                node_id, output = result
-                outputs_by_node[node_id] = output
+                node_id, node_result = result
+                outputs_by_node[node_id] = node_result.output
+                live_by_node[node_id] = True
+                selected_handle_by_node[node_id] = node_result.selected_handle
 
             next_ready: list[int] = []
             for node_id in ready:
@@ -844,6 +1003,7 @@ class ExecutionUsecase:
                         next_ready.append(child_id)
             ready = next_ready
 
+        self._raise_if_output_not_live(graph=graph, live_by_node=live_by_node)
         return outputs_by_node
 
     async def _run_node_isolated(
@@ -852,8 +1012,8 @@ class ExecutionUsecase:
         run_context: _NodeRunContext,
         node: NodeResponse,
         parent_values: list[str],
-    ) -> tuple[int, str]:
-        """Run one node on a dedicated session and return its ID and output.
+    ) -> tuple[int, NodeExecutionResult]:
+        """Run one node on a dedicated session and return its ID and result.
 
         Args:
             session_factory: Factory for the node's own session.
@@ -862,18 +1022,18 @@ class ExecutionUsecase:
             parent_values: Outputs of the node's parents.
 
         Returns:
-            The node ID paired with its output text.
+            The node ID paired with its execution result.
 
         """
         async with session_factory() as node_session:
-            output = await self._run_node(
+            result = await self._run_node(
                 session=node_session,
                 run_context=run_context,
                 node=node,
                 parent_values=parent_values,
             )
 
-        return node.id, output
+        return node.id, result
 
     async def _run_node(
         self,
@@ -881,7 +1041,7 @@ class ExecutionUsecase:
         run_context: _NodeRunContext,
         node: NodeResponse,
         parent_values: list[str],
-    ) -> str:
+    ) -> NodeExecutionResult:
         """Run one node with retries, persisting its final result.
 
         Args:
@@ -891,7 +1051,7 @@ class ExecutionUsecase:
             parent_values: Outputs of the node's parents.
 
         Returns:
-            The node output text.
+            The node execution result.
 
         Raises:
             BaseError: If the node fails after exhausting its attempts.
@@ -900,7 +1060,7 @@ class ExecutionUsecase:
         started_at = datetime.now(tz=UTC).replace(tzinfo=None)
         for attempt in range(1, self._max_node_attempts + 1):
             try:
-                output = await self._run_node_once(
+                result = await self._run_node_once(
                     session=session,
                     run_context=run_context,
                     node=node,
@@ -933,9 +1093,11 @@ class ExecutionUsecase:
                 run_context=run_context,
                 node_id=node.id,
                 started_at=started_at,
-                outcome=_NodeOutcome(status=ExecutionStatus.SUCCESS, output=output),
+                outcome=_NodeOutcome(
+                    status=ExecutionStatus.SUCCESS, output=result.output
+                ),
             )
-            return output
+            return result
 
         # Unreachable: the loop always returns or raises, but satisfies typing.
         message = f"Node {node.id} exhausted retries"
@@ -947,7 +1109,7 @@ class ExecutionUsecase:
         run_context: _NodeRunContext,
         node: NodeResponse,
         parent_values: list[str],
-    ) -> str:
+    ) -> NodeExecutionResult:
         """Execute a single node attempt within its time budget.
 
         Args:
@@ -957,7 +1119,7 @@ class ExecutionUsecase:
             parent_values: Outputs of the node's parents.
 
         Returns:
-            The node output text.
+            The node execution result.
 
         Raises:
             ExecutionGraphValidationError: If a non-input node has no input.
@@ -1147,8 +1309,63 @@ class ExecutionUsecase:
         # merging are deterministic across runs of the same workflow.
         ordered_nodes = sorted(nodes, key=lambda node: node.id)
         nodes_by_id = {node.id: node for node in ordered_nodes}
+        adjacency = self._build_adjacency(
+            ordered_nodes=ordered_nodes, edges=edges, nodes_by_id=nodes_by_id
+        )
+
+        topological_order = self._topological_order(
+            indegree=adjacency.indegree, outbound=adjacency.outbound
+        )
+        input_node_id = input_nodes[0].id
+        output_node_id = output_nodes[0].id
+        self._validate_connectivity(
+            input_node_id=input_node_id,
+            output_node_id=output_node_id,
+            outbound=adjacency.outbound,
+            inbound=adjacency.inbound,
+            nodes_by_id=nodes_by_id,
+        )
+
+        return ExecutionGraphContext(
+            input_node_id=input_node_id,
+            output_node_id=output_node_id,
+            nodes_by_id=nodes_by_id,
+            outbound=adjacency.outbound,
+            inbound=adjacency.inbound,
+            outbound_edges=adjacency.outbound_edges,
+            inbound_edges=adjacency.inbound_edges,
+            topological_order=topological_order,
+        )
+
+    def _build_adjacency(
+        self,
+        ordered_nodes: list[NodeResponse],
+        edges: list[EdgeResponse],
+        nodes_by_id: dict[int, NodeResponse],
+    ) -> _Adjacency:
+        """Build sorted adjacency maps (with per-edge source handles) and indegree.
+
+        Args:
+            ordered_nodes: Workflow nodes in stable id order.
+            edges: Workflow edges.
+            nodes_by_id: Nodes indexed by ID.
+
+        Returns:
+            The graph's adjacency maps and indegree count.
+
+        Raises:
+            ExecutionGraphValidationError: If an edge is malformed or its
+                source/target ports are incompatible.
+
+        """
         outbound: dict[int, list[int]] = {node.id: [] for node in ordered_nodes}
         inbound: dict[int, list[int]] = {node.id: [] for node in ordered_nodes}
+        outbound_edges: dict[int, list[tuple[int, str | None]]] = {
+            node.id: [] for node in ordered_nodes
+        }
+        inbound_edges: dict[int, list[tuple[int, str | None]]] = {
+            node.id: [] for node in ordered_nodes
+        }
         indegree: dict[int, int] = {node.id: 0 for node in ordered_nodes}
         for edge in edges:
             source_id = edge.source_node_id
@@ -1165,6 +1382,8 @@ class ExecutionUsecase:
 
             outbound[source_id].append(target_id)
             inbound[target_id].append(source_id)
+            outbound_edges[source_id].append((target_id, edge.source_handle))
+            inbound_edges[target_id].append((source_id, edge.source_handle))
             indegree[target_id] += 1
 
         # Deterministic adjacency: parent merge order and wave order no longer
@@ -1173,27 +1392,17 @@ class ExecutionUsecase:
             neighbours.sort()
         for parents in inbound.values():
             parents.sort()
+        for neighbours_with_handle in outbound_edges.values():
+            neighbours_with_handle.sort(key=lambda item: item[0])
+        for parents_with_handle in inbound_edges.values():
+            parents_with_handle.sort(key=lambda item: item[0])
 
-        topological_order = self._topological_order(
-            indegree=indegree, outbound=outbound
-        )
-        input_node_id = input_nodes[0].id
-        output_node_id = output_nodes[0].id
-        self._validate_connectivity(
-            input_node_id=input_node_id,
-            output_node_id=output_node_id,
+        return _Adjacency(
             outbound=outbound,
             inbound=inbound,
-            nodes_by_id=nodes_by_id,
-        )
-
-        return ExecutionGraphContext(
-            input_node_id=input_node_id,
-            output_node_id=output_node_id,
-            nodes_by_id=nodes_by_id,
-            outbound=outbound,
-            inbound=inbound,
-            topological_order=topological_order,
+            outbound_edges=outbound_edges,
+            inbound_edges=inbound_edges,
+            indegree=indegree,
         )
 
     def _topological_order(

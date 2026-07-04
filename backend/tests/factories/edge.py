@@ -15,3 +15,4 @@ class EdgeFactory(AsyncSQLAlchemyModelFactory):
     workflow_id = None
     source_node_id = None
     target_node_id = None
+    source_handle = None

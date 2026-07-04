@@ -45,6 +45,12 @@ class ExecutionGraphContext(BaseModel):
     nodes_by_id: dict[int, Any] = Field(default=..., description="Nodes map")
     outbound: dict[int, list[int]] = Field(default=..., description="Outbound edges")
     inbound: dict[int, list[int]] = Field(default=..., description="Inbound edges")
+    outbound_edges: dict[int, list[tuple[int, str | None]]] = Field(
+        default=..., description="Outbound edges with their source handle"
+    )
+    inbound_edges: dict[int, list[tuple[int, str | None]]] = Field(
+        default=..., description="Inbound edges with their source handle"
+    )
     topological_order: list[int] = Field(default=..., description="Topological order")
 
 

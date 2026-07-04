@@ -21,8 +21,22 @@ class NodeExecutionContext:
     on_token: OnToken | None = None
 
 
+@dataclass(frozen=True)
+class NodeExecutionResult:
+    """Result of a single node handler execution.
+
+    ``selected_handle`` is None for ordinary (single-output) nodes. Branching
+    nodes (e.g. Condition) set it to the name of the one outbound edge handle
+    that should carry the node's output onward; edges attached to any other
+    handle are treated as not taken.
+    """
+
+    output: str
+    selected_handle: str | None = None
+
+
 class NodeHandler(Protocol):
     """Protocol for node handlers."""
 
-    async def execute(self, context: NodeExecutionContext) -> str:
+    async def execute(self, context: NodeExecutionContext) -> NodeExecutionResult:
         """Execute node logic and return node output."""

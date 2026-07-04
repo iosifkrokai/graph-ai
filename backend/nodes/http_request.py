@@ -8,7 +8,7 @@ import httpx
 from constants.timeout import DEFAULT_TIMEOUT
 from enums import HttpMethod, NodeType, PortType, ValidatorType
 from exceptions import ExecutionGraphValidationError, HTTPRequestError
-from nodes.base import NodeExecutionContext
+from nodes.base import NodeExecutionContext, NodeExecutionResult
 from nodes.definition import NodeDefinition, NodeHandlerDeps
 from nodes.rendering import render_input, upstream_text
 from schemas import (
@@ -26,7 +26,7 @@ _ALLOWED_SCHEMES = ("http://", "https://")
 class HTTPRequestNodeHandler:
     """Handler for HTTP request nodes."""
 
-    async def execute(self, context: NodeExecutionContext) -> str:
+    async def execute(self, context: NodeExecutionContext) -> NodeExecutionResult:
         """Perform an HTTP request and return the response body.
 
         Args:
@@ -51,7 +51,7 @@ class HTTPRequestNodeHandler:
         payload = await self._request(
             method=method, url=url, headers=headers, body=body
         )
-        return payload[:_MAX_RESPONSE_CHARS]
+        return NodeExecutionResult(output=payload[:_MAX_RESPONSE_CHARS])
 
     def _read_url(self, context: NodeExecutionContext) -> str:
         """Read, render, and validate the target URL."""

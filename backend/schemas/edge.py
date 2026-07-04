@@ -9,6 +9,10 @@ class EdgeCreate(BaseModel):
     workflow_id: int = Field(default=..., description="Workflow ID", gt=0)
     source_node_id: int = Field(default=..., description="Source node ID", gt=0)
     target_node_id: int = Field(default=..., description="Target node ID", gt=0)
+    source_handle: str | None = Field(
+        default=None,
+        description="Named output handle on the source node, for branching nodes",
+    )
 
 
 class EdgeUpdate(BaseModel):
@@ -16,6 +20,10 @@ class EdgeUpdate(BaseModel):
 
     source_node_id: int | None = Field(default=None, description="Source node ID")
     target_node_id: int | None = Field(default=None, description="Target node ID")
+    source_handle: str | None = Field(
+        default=None,
+        description="Named output handle on the source node, for branching nodes",
+    )
 
 
 class EdgeResponse(BaseModel):
@@ -27,3 +35,6 @@ class EdgeResponse(BaseModel):
     workflow_id: int = Field(default=..., description="Workflow ID", gt=0)
     source_node_id: int = Field(default=..., description="Source node ID", gt=0)
     target_node_id: int = Field(default=..., description="Target node ID", gt=0)
+    source_handle: str | None = Field(
+        default=None, description="Named output handle on the source node"
+    )

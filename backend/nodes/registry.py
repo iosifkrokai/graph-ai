@@ -7,7 +7,8 @@ this list (plus its ``NodeType`` enum member).
 
 from enums import NodeType
 from exceptions import ExecutionGraphValidationError
-from nodes.base import NodeExecutionContext, NodeHandler
+from nodes.base import NodeExecutionContext, NodeExecutionResult, NodeHandler
+from nodes.condition import DEFINITION as CONDITION_DEFINITION
 from nodes.definition import NodeDefinition, NodeHandlerDeps, ports_compatible
 from nodes.http_request import DEFINITION as HTTP_REQUEST_DEFINITION
 from nodes.input import DEFINITION as INPUT_DEFINITION
@@ -23,6 +24,7 @@ NODE_DEFINITIONS: tuple[NodeDefinition, ...] = (
     WEB_SEARCH_DEFINITION,
     TEMPLATE_DEFINITION,
     HTTP_REQUEST_DEFINITION,
+    CONDITION_DEFINITION,
     OUTPUT_DEFINITION,
 )
 
@@ -112,7 +114,7 @@ class NodeHandlerRegistry:
         *,
         node_type: NodeType,
         context: NodeExecutionContext,
-    ) -> str:
+    ) -> NodeExecutionResult:
         """Dispatch node execution to a registered handler.
 
         Args:
@@ -120,7 +122,7 @@ class NodeHandlerRegistry:
             context: Node execution context.
 
         Returns:
-            Node execution output.
+            Node execution result.
 
         Raises:
             ExecutionGraphValidationError: If node type is unsupported.

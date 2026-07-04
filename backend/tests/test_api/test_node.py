@@ -11,39 +11,36 @@ from tests.factories import LLMProviderFactory, NodeFactory, WorkflowFactory
 from tests.test_api.base import BaseTestCase
 
 
-def build_node_data(node_type: NodeType, *, llm_provider_id: int | None = None) -> dict:
-    """Build node data payloads for tests."""
-    if node_type is NodeType.INPUT:
-        return {
-            "label": f"node-{uuid.uuid4().hex[:8]}",
-            "format": InputNodeFormat.TXT,
-        }
-    if node_type is NodeType.LLM:
-        return {
-            "label": f"node-{uuid.uuid4().hex[:8]}",
+def _extra_fields_by_type(node_type: NodeType, *, llm_provider_id: int | None) -> dict:
+    """Return the type-specific fields for a node data payload."""
+    by_type: dict[NodeType, dict] = {
+        NodeType.INPUT: {"format": InputNodeFormat.TXT},
+        NodeType.LLM: {
             "llm_provider_id": llm_provider_id,
             "model": "gpt-4",
             "system_prompt": "You are a helpful assistant.",
-        }
-    if node_type is NodeType.WEB_SEARCH:
-        return {
-            "label": f"node-{uuid.uuid4().hex[:8]}",
-            "max_results": 5,
-        }
-    if node_type is NodeType.TEMPLATE:
-        return {
-            "label": f"node-{uuid.uuid4().hex[:8]}",
-            "template": "Summary: {{input}}",
-        }
-    if node_type is NodeType.HTTP_REQUEST:
-        return {
-            "label": f"node-{uuid.uuid4().hex[:8]}",
+        },
+        NodeType.WEB_SEARCH: {"max_results": 5},
+        NodeType.TEMPLATE: {"template": "Summary: {{input}}"},
+        NodeType.HTTP_REQUEST: {
             "url": "https://api.example.com/endpoint",
             "method": "get",
-        }
+        },
+        NodeType.CONDITION: {
+            "condition_type": "contains",
+            "value": "hello",
+            "case_sensitive": "false",
+        },
+        NodeType.OUTPUT: {"format": OutputNodeFormat.TXT},
+    }
+    return by_type[node_type]
+
+
+def build_node_data(node_type: NodeType, *, llm_provider_id: int | None = None) -> dict:
+    """Build node data payloads for tests."""
     return {
         "label": f"node-{uuid.uuid4().hex[:8]}",
-        "format": OutputNodeFormat.TXT,
+        **_extra_fields_by_type(node_type, llm_provider_id=llm_provider_id),
     }
 
 
@@ -53,6 +50,7 @@ EXPECTED_FIELDS_BY_TYPE: dict[NodeType, set[str]] = {
     NodeType.WEB_SEARCH: {"label", "max_results"},
     NodeType.TEMPLATE: {"label", "template"},
     NodeType.HTTP_REQUEST: {"label", "url", "method"},
+    NodeType.CONDITION: {"label", "condition_type", "value", "case_sensitive"},
     NodeType.OUTPUT: {"label", "format"},
 }
 

@@ -1,7 +1,7 @@
 """Output node handler."""
 
 from enums import NodeType, OutputNodeFormat, PortType, ValidatorType
-from nodes.base import NodeExecutionContext
+from nodes.base import NodeExecutionContext, NodeExecutionResult
 from nodes.definition import NodeDefinition, NodeHandlerDeps
 from schemas import (
     NodeFieldDataSource,
@@ -17,9 +17,9 @@ from schemas import (
 class OutputNodeHandler:
     """Handler for output nodes."""
 
-    async def execute(self, context: NodeExecutionContext) -> str:
+    async def execute(self, context: NodeExecutionContext) -> NodeExecutionResult:
         """Join upstream values into final output."""
-        return "\n".join(context.parent_values)
+        return NodeExecutionResult(output="\n".join(context.parent_values))
 
 
 def _build_handler(deps: NodeHandlerDeps) -> OutputNodeHandler:

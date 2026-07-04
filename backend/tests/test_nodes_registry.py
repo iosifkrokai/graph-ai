@@ -8,6 +8,7 @@ from enums import NodeType, PortType
 from exceptions import ExecutionGraphValidationError
 from nodes import (
     NODE_DEFINITIONS,
+    ConditionNodeHandler,
     HTTPRequestNodeHandler,
     TemplateNodeHandler,
     build_node_catalog,
@@ -107,13 +108,13 @@ class TestTemplateNode:
     async def test_substitutes_placeholder(self) -> None:
         """The upstream text replaces the {{input}} placeholder."""
         handler = TemplateNodeHandler()
-        output = await handler.execute(
+        result = await handler.execute(
             _context(
                 {"template": "Summary: {{input}}"},
                 parent_values=["hello world"],
             )
         )
-        if output != "Summary: hello world":
+        if result.output != "Summary: hello world":
             pytest.fail("Template placeholder was not substituted")
 
     @pytest.mark.asyncio
@@ -168,13 +169,13 @@ class TestHTTPRequestNode:
         """POST with no body field sends the upstream text."""
         monkeypatch.setattr("nodes.http_request.httpx.AsyncClient", _DummyHTTPClient)
         handler = HTTPRequestNodeHandler()
-        output = await handler.execute(
+        result = await handler.execute(
             _context(
                 {"url": "https://api.example.com", "method": "post"},
                 parent_values=["payload"],
             )
         )
-        if output != "response body":
+        if result.output != "response body":
             pytest.fail("Handler did not return the response body")
         if _DummyHTTPClient.calls.get("method") != "POST":
             pytest.fail("Method was not forwarded")
@@ -255,4 +256,140 @@ class TestHTTPRequestNode:
                     {"url": "http://127.0.0.1/admin", "method": "get"},
                     parent_values=["x"],
                 )
+            )
+
+
+class TestConditionNode:
+    """Tests for the condition/router node handler."""
+
+    @pytest.mark.asyncio
+    async def test_contains_match_selects_true_branch(self) -> None:
+        """A matching contains condition routes to the true handle."""
+        handler = ConditionNodeHandler()
+        result = await handler.execute(
+            _context(
+                {"condition_type": "contains", "value": "world"},
+                parent_values=["hello world"],
+            )
+        )
+        if result.selected_handle != "true" or result.output != "hello world":
+            pytest.fail("Matching contains condition should select true")
+
+    @pytest.mark.asyncio
+    async def test_contains_mismatch_selects_false_branch(self) -> None:
+        """A non-matching contains condition routes to the false handle."""
+        handler = ConditionNodeHandler()
+        result = await handler.execute(
+            _context(
+                {"condition_type": "contains", "value": "bye"},
+                parent_values=["hello world"],
+            )
+        )
+        if result.selected_handle != "false":
+            pytest.fail("Non-matching contains condition should select false")
+
+    @pytest.mark.asyncio
+    async def test_contains_is_case_insensitive_by_default(self) -> None:
+        """Case sensitivity defaults to off."""
+        handler = ConditionNodeHandler()
+        result = await handler.execute(
+            _context(
+                {"condition_type": "contains", "value": "WORLD"},
+                parent_values=["hello world"],
+            )
+        )
+        if result.selected_handle != "true":
+            pytest.fail("Contains should be case-insensitive by default")
+
+    @pytest.mark.asyncio
+    async def test_case_sensitive_contains_respects_case(self) -> None:
+        """Setting case_sensitive=true makes contains case-sensitive."""
+        handler = ConditionNodeHandler()
+        result = await handler.execute(
+            _context(
+                {
+                    "condition_type": "contains",
+                    "value": "WORLD",
+                    "case_sensitive": "true",
+                },
+                parent_values=["hello world"],
+            )
+        )
+        if result.selected_handle != "false":
+            pytest.fail("case_sensitive=true should make contains case-sensitive")
+
+    @pytest.mark.asyncio
+    async def test_equals_exact_match(self) -> None:
+        """Equals condition matches only the exact upstream text."""
+        handler = ConditionNodeHandler()
+        result = await handler.execute(
+            _context(
+                {"condition_type": "equals", "value": "hello"},
+                parent_values=["hello"],
+            )
+        )
+        if result.selected_handle != "true":
+            pytest.fail("Exact match should select true")
+
+    @pytest.mark.asyncio
+    async def test_regex_match(self) -> None:
+        """Regex condition matches against a pattern."""
+        handler = ConditionNodeHandler()
+        result = await handler.execute(
+            _context(
+                {"condition_type": "regex", "value": r"^\d+$"},
+                parent_values=["12345"],
+            )
+        )
+        if result.selected_handle != "true":
+            pytest.fail("Regex match should select true")
+
+    @pytest.mark.asyncio
+    async def test_invalid_regex_rejected(self) -> None:
+        """An invalid regex pattern raises a graph validation error."""
+        handler = ConditionNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context(
+                    {"condition_type": "regex", "value": "("},
+                    parent_values=["x"],
+                )
+            )
+
+    @pytest.mark.asyncio
+    async def test_not_empty_true_for_non_blank_input(self) -> None:
+        """not_empty selects true for non-blank upstream text."""
+        handler = ConditionNodeHandler()
+        result = await handler.execute(
+            _context({"condition_type": "not_empty"}, parent_values=["x"])
+        )
+        if result.selected_handle != "true":
+            pytest.fail("Non-blank input should select true")
+
+    @pytest.mark.asyncio
+    async def test_not_empty_false_for_blank_input(self) -> None:
+        """not_empty selects false for blank upstream text."""
+        handler = ConditionNodeHandler()
+        result = await handler.execute(
+            _context({"condition_type": "not_empty"}, parent_values=["   "])
+        )
+        if result.selected_handle != "false":
+            pytest.fail("Blank input should select false")
+
+    @pytest.mark.asyncio
+    async def test_missing_value_rejected_for_contains(self) -> None:
+        """A missing comparison value raises a graph validation error."""
+        handler = ConditionNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context({"condition_type": "contains"}, parent_values=["x"])
+            )
+
+    @pytest.mark.asyncio
+    async def test_unsupported_condition_type_rejected(self) -> None:
+        """An unrecognized condition_type raises a graph validation error."""
+        handler = ConditionNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context({"condition_type": "bogus", "value": "x"}, parent_values=["x"])
             )

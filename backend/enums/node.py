@@ -11,6 +11,7 @@ class NodeType(StrEnum):
     WEB_SEARCH = auto()
     TEMPLATE = auto()
     HTTP_REQUEST = auto()
+    CONDITION = auto()
     OUTPUT = auto()
 
 
@@ -50,3 +51,24 @@ class OutputNodeFormat(StrEnum):
 
     TXT = auto()
     TELEGRAM = auto()
+
+
+class ConditionType(StrEnum):
+    """Supported evaluation modes for the condition/router node."""
+
+    CONTAINS = auto()
+    EQUALS = auto()
+    REGEX = auto()
+    NOT_EMPTY = auto()
+
+    @property
+    def needs_value(self) -> bool:
+        """Whether this condition type requires a comparison value."""
+        return self is not ConditionType.NOT_EMPTY
+
+
+class ConditionBranch(StrEnum):
+    """Output handles of the condition/router node."""
+
+    TRUE = "true"
+    FALSE = "false"

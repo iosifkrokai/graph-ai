@@ -3,6 +3,7 @@
 from exceptions.auth import AuthCredentialsError
 from exceptions.base import BaseError
 from exceptions.edge import (
+    EdgeHandleMismatchError,
     EdgeNodeMismatchError,
     EdgeNotFoundError,
     EdgePortMismatchError,
@@ -34,6 +35,7 @@ __all__ = [
     "AuthCredentialsError",
     "BaseError",
     "BlockedURLError",
+    "EdgeHandleMismatchError",
     "EdgeNodeMismatchError",
     "EdgeNotFoundError",
     "EdgePortMismatchError",

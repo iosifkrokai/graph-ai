@@ -2,16 +2,18 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import Node
 from db.repositories import EdgeRepository, NodeRepository, WorkflowRepository
 from enums import NodeType
 from exceptions import (
+    EdgeHandleMismatchError,
     EdgeNodeMismatchError,
     EdgeNotFoundError,
     EdgePortMismatchError,
     NodeNotFoundError,
     WorkflowNotFoundError,
 )
-from nodes import check_edge_ports
+from nodes import check_edge_ports, get_node_definition
 from schemas import EdgeCreate, EdgeResponse, EdgeUpdate
 
 
@@ -23,6 +25,39 @@ class EdgeUsecase:
         self._edge_repository = EdgeRepository()
         self._node_repository = NodeRepository()
         self._workflow_repository = WorkflowRepository()
+
+    def _validate_source_handle(
+        self, source_node: Node, source_handle: str | None
+    ) -> None:
+        """Check that a source handle matches the source node's output handles.
+
+        Args:
+            source_node: The edge's source node.
+            source_handle: The requested handle, or None for the default handle.
+
+        Raises:
+            EdgeHandleMismatchError: If the handle doesn't match the node type.
+
+        """
+        output_handles = get_node_definition(
+            NodeType(source_node.type)
+        ).graph.output_handles
+        if output_handles is None:
+            if source_handle is not None:
+                message = (
+                    f"Node type '{source_node.type}' has a single default output "
+                    "handle; source_handle must be omitted"
+                )
+                raise EdgeHandleMismatchError(message=message)
+            return
+
+        if source_handle not in output_handles:
+            options = ", ".join(output_handles)
+            message = (
+                f"Node type '{source_node.type}' requires source_handle to be "
+                f"one of: {options}"
+            )
+            raise EdgeHandleMismatchError(message=message)
 
     async def create_edge(
         self,
@@ -75,6 +110,8 @@ class EdgeUsecase:
         )
         if port_error is not None:
             raise EdgePortMismatchError(message=port_error)
+
+        self._validate_source_handle(source_node, data.source_handle)
 
         return EdgeResponse.model_validate(
             await self._edge_repository.create(session=session, data=data.model_dump())
@@ -187,6 +224,15 @@ class EdgeUsecase:
             or target_node.workflow_id != edge.workflow_id
         ):
             raise EdgeNodeMismatchError
+
+        port_error = check_edge_ports(
+            NodeType(source_node.type), NodeType(target_node.type)
+        )
+        if port_error is not None:
+            raise EdgePortMismatchError(message=port_error)
+
+        source_handle = update_data.get("source_handle", edge.source_handle)
+        self._validate_source_handle(source_node, source_handle)
 
         edge = await self._edge_repository.update_by(
             session=session,

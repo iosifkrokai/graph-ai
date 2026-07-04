@@ -17,6 +17,7 @@ from db.repositories import (
 )
 from enums import ExecutionStatus, NodeType
 from exceptions import ExecutionGraphValidationError, LLMProviderConnectionError
+from nodes import NodeExecutionResult
 from schemas import ExecutionResponse
 from tests.factories import (
     EdgeFactory,
@@ -991,6 +992,151 @@ class TestNodeExecutionList(BaseTestCase):
             pytest.fail("Expected NOT_FOUND when reading another user's node results")
 
 
+class TestExecutionCondition(BaseTestCase):
+    """Tests for Condition/Router branching and skip propagation."""
+
+    async def _build_branching_workflow(self, user: dict) -> dict[str, int]:
+        """Build input -> condition -> {true, false} template branches -> output."""
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        condition_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.CONDITION,
+            data={
+                "label": "Condition",
+                "condition_type": "contains",
+                "value": "yes",
+                "case_sensitive": "false",
+            },
+        )
+        true_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.TEMPLATE,
+            data={"label": "True branch", "template": "TRUE:{{input}}"},
+        )
+        false_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.TEMPLATE,
+            data={"label": "False branch", "template": "FALSE:{{input}}"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=condition_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=condition_node.id,
+            target_node_id=true_node.id,
+            source_handle="true",
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=condition_node.id,
+            target_node_id=false_node.id,
+            source_handle="false",
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=true_node.id,
+            target_node_id=output_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=false_node.id,
+            target_node_id=output_node.id,
+        )
+        return {
+            "workflow_id": workflow.id,
+            "true_node_id": true_node.id,
+            "false_node_id": false_node.id,
+        }
+
+    async def _run_and_get_node_results(
+        self, headers: dict, workflow_id: int, input_value: str
+    ) -> tuple[dict, list[dict]]:
+        """Run the workflow and return the execution plus its node results."""
+        run_response = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": input_value}},
+            headers=headers,
+        )
+        created = await self.assert_response_dict(response=run_response)
+        execution = await run_execution(self.session, created["id"])
+        nodes_response = await self.client.get(
+            url=f"/executions/{execution.id}/nodes", headers=headers
+        )
+        nodes = await self.assert_response_list(response=nodes_response)
+        return execution.model_dump(mode="json"), nodes
+
+    @pytest.mark.asyncio
+    async def test_matching_condition_runs_true_branch_and_skips_false(self) -> None:
+        """A matching condition executes the true branch and skips the false one."""
+        user, headers = await self.create_user_and_get_token()
+        ids = await self._build_branching_workflow(user)
+
+        execution, nodes = await self._run_and_get_node_results(
+            headers=headers, workflow_id=ids["workflow_id"], input_value="yes please"
+        )
+
+        if execution["status"] != ExecutionStatus.SUCCESS:
+            pytest.fail("Execution with a live path to output should succeed")
+        if execution["output_data"]["value"] != "TRUE:yes please":
+            pytest.fail("Output should carry only the true branch's text")
+
+        by_node = {item["node_id"]: item for item in nodes}
+        if by_node[ids["true_node_id"]]["status"] != ExecutionStatus.SUCCESS:
+            pytest.fail("True branch should have run successfully")
+        if by_node[ids["false_node_id"]]["status"] != ExecutionStatus.SKIPPED:
+            pytest.fail("False branch should have been skipped")
+        if by_node[ids["false_node_id"]]["output"] is not None:
+            pytest.fail("A skipped node should not have an output")
+
+    @pytest.mark.asyncio
+    async def test_non_matching_condition_runs_false_branch_and_skips_true(
+        self,
+    ) -> None:
+        """A non-matching condition executes the false branch and skips true."""
+        user, headers = await self.create_user_and_get_token()
+        ids = await self._build_branching_workflow(user)
+
+        execution, nodes = await self._run_and_get_node_results(
+            headers=headers, workflow_id=ids["workflow_id"], input_value="nope"
+        )
+
+        if execution["status"] != ExecutionStatus.SUCCESS:
+            pytest.fail("Execution with a live path to output should succeed")
+        if execution["output_data"]["value"] != "FALSE:nope":
+            pytest.fail("Output should carry only the false branch's text")
+
+        by_node = {item["node_id"]: item for item in nodes}
+        if by_node[ids["false_node_id"]]["status"] != ExecutionStatus.SUCCESS:
+            pytest.fail("False branch should have run successfully")
+        if by_node[ids["true_node_id"]]["status"] != ExecutionStatus.SKIPPED:
+            pytest.fail("True branch should have been skipped")
+
+
 class TestExecutionRetries(BaseTestCase):
     """Tests for node-level retries and timeouts."""
 
@@ -1039,13 +1185,13 @@ class TestExecutionRetries(BaseTestCase):
         """A transient node failure is retried and the execution succeeds."""
         calls = {"count": 0}
 
-        async def flaky(*args: object, **kwargs: object) -> str:
+        async def flaky(*args: object, **kwargs: object) -> NodeExecutionResult:
             """Fail on the first call, then succeed."""
             del args, kwargs
             calls["count"] += 1
             if calls["count"] == 1:
                 raise LLMProviderConnectionError(message="temporary blip")
-            return "ok"
+            return NodeExecutionResult(output="ok")
 
         monkeypatch.setattr("nodes.registry.NodeHandlerRegistry.execute", flaky)
         monkeypatch.setattr(
@@ -1241,11 +1387,11 @@ class TestExecutionParallel(BaseTestCase):
     ) -> None:
         """Two sibling branches of a diamond graph overlap in time."""
 
-        async def slow_execute(*args: object, **kwargs: object) -> str:
+        async def slow_execute(*args: object, **kwargs: object) -> NodeExecutionResult:
             """Simulate slow node work so concurrent branches overlap."""
             del args, kwargs
             await asyncio.sleep(0.3)
-            return "ok"
+            return NodeExecutionResult(output="ok")
 
         monkeypatch.setattr("nodes.registry.NodeHandlerRegistry.execute", slow_execute)
 

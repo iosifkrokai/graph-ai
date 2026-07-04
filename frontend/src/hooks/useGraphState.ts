@@ -45,7 +45,11 @@ interface UseGraphStateResult {
   handleUpdateNodeData: (nodeId: string, data: Record<string, unknown>) => Promise<boolean>
   handleNodesChange: (changes: NodeChange[]) => void
   handleMoveNode: (nodeId: string, x: number, y: number) => Promise<void>
-  handleConnect: (sourceId: string, targetId: string) => Promise<void>
+  handleConnect: (
+    sourceId: string,
+    targetId: string,
+    sourceHandle: string | null,
+  ) => Promise<void>
   handleDeleteEdge: (edgeId: string) => Promise<void>
 }
 
@@ -53,11 +57,13 @@ function toFlowEdge(edge: {
   id: number
   source_node_id: number
   target_node_id: number
+  source_handle?: string | null
 }): Edge {
   return {
     id: String(edge.id),
     source: String(edge.source_node_id),
     target: String(edge.target_node_id),
+    sourceHandle: edge.source_handle ?? undefined,
     type: 'step',
     markerEnd: {
       type: MarkerType.ArrowClosed,
@@ -273,7 +279,11 @@ export function useGraphState({
   )
 
   const handleConnect = useCallback(
-    async (sourceId: string, targetId: string): Promise<void> => {
+    async (
+      sourceId: string,
+      targetId: string,
+      sourceHandle: string | null,
+    ): Promise<void> => {
       if (!activeWorkflowId) {
         return
       }
@@ -284,6 +294,7 @@ export function useGraphState({
           workflow_id: activeWorkflowId,
           source_node_id: Number(sourceId),
           target_node_id: Number(targetId),
+          source_handle: sourceHandle,
         })
         setEdges((previous) => [
           ...previous,

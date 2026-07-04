@@ -10,7 +10,7 @@ import type {
   NodeType,
   TelegramBot,
 } from '../lib/types'
-import { validateFields } from '../lib/validation'
+import { matchesVisibility, validateFields } from '../lib/validation'
 import { NumberInput } from './NumberInput'
 
 interface InspectorPanelProps {
@@ -453,10 +453,7 @@ export function InspectorPanel({
       // stale value (e.g. a bot ID left over from a different format) never
       // gets saved silently alongside the new value.
       for (const dependent of fields) {
-        if (
-          dependent.visible_when?.field === key &&
-          dependent.visible_when.equals !== value
-        ) {
+        if (dependent.visible_when?.field === key && !matchesVisibility(dependent.visible_when, value)) {
           next[dependent.name] = null
         }
       }
@@ -577,7 +574,7 @@ export function InspectorPanel({
                 if (!field.visible_when) {
                   return true
                 }
-                return draftData[field.visible_when.field] === field.visible_when.equals
+                return matchesVisibility(field.visible_when, draftData[field.visible_when.field])
               })
               .map((field) => (
                 <label key={field.name} className="pixel-label">

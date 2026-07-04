@@ -29,7 +29,7 @@ interface GraphCanvasProps {
   onSelectNode: (id: string | null) => void
   onNodesChange: (changes: NodeChange[]) => void
   onMoveNode: (id: string, x: number, y: number) => void
-  onConnect: (sourceId: string, targetId: string) => void
+  onConnect: (sourceId: string, targetId: string, sourceHandle: string | null) => void
   onDeleteEdge: (edgeId: string) => void
   onDropNode: (type: string, position: { x: number; y: number }) => void
   onDeleteNode: (id: string) => void
@@ -208,7 +208,7 @@ function GraphCanvasInner({
         }
         onConnect={(params: Connection) => {
           if (params.source && params.target) {
-            onConnect(params.source, params.target)
+            onConnect(params.source, params.target, params.sourceHandle)
           }
         }}
         isValidConnection={isValidConnection}

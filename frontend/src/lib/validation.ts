@@ -1,4 +1,19 @@
-import type { NodeCatalogField } from './types'
+import type { NodeCatalogField, NodeCatalogFieldVisibility } from './types'
+
+/**
+ * Evaluate a field's declarative `visible_when` rule against its controlling
+ * sibling field's current value. Exactly one of `equals`/`not_equals` is set
+ * on the rule (enforced backend-side).
+ */
+export function matchesVisibility(
+  rule: NodeCatalogFieldVisibility,
+  controllingValue: unknown,
+): boolean {
+  if (rule.equals !== null && rule.equals !== undefined) {
+    return controllingValue === rule.equals
+  }
+  return controllingValue !== rule.not_equals
+}
 
 function isEmptyValue(value: unknown): boolean {
   return (

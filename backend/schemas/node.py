@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from enums import NodeType, PortType
 
@@ -52,18 +52,30 @@ class NodeFieldDataSource(BaseModel):
 class NodeFieldVisibility(BaseModel):
     """Conditional visibility rule for a node field.
 
-    The field is only shown (and should only be persisted) when the named
-    sibling field's current value equals ``equals``. This keeps format-gated
-    fields (e.g. a Telegram bot picker that only makes sense for
-    ``format=telegram``) declarative in the catalog instead of hardcoded per
-    widget in the frontend — adding a new gated field for a future format
-    means adding one of these, not a new frontend branch.
+    The field is shown (and should only be persisted) when the named sibling
+    field's current value equals ``equals``, or when ``not_equals`` is set,
+    when it does *not* equal ``not_equals``. Exactly one of the two must be
+    set. This keeps gated fields (e.g. a Telegram bot picker that only makes
+    sense for ``format=telegram``, or a condition value hidden for a
+    value-less condition type) declarative in the catalog instead of
+    hardcoded per widget in the frontend.
     """
 
     model_config = ConfigDict(frozen=True)
 
     field: str = Field(default=..., description="Name of the controlling field")
-    equals: Any = Field(default=..., description="Value that makes this field visible")
+    equals: Any = Field(default=None, description="Value that makes this field visible")
+    not_equals: Any = Field(
+        default=None, description="Value that makes this field hidden"
+    )
+
+    @model_validator(mode="after")
+    def _check_exactly_one_condition(self) -> "NodeFieldVisibility":
+        """Ensure exactly one of equals/not_equals is configured."""
+        if (self.equals is None) == (self.not_equals is None):
+            message = "NodeFieldVisibility requires exactly one of equals/not_equals"
+            raise ValueError(message)
+        return self
 
 
 class NodeFieldSpec(BaseModel):
@@ -101,6 +113,13 @@ class NodeGraphSpec(BaseModel):
     )
     output_port: PortType | None = Field(
         default=None, description="Output port data type (None when no output handle)"
+    )
+    output_handles: tuple[str, ...] | None = Field(
+        default=None,
+        description=(
+            "Named output branches (e.g. condition true/false). None means a "
+            "single implicit default handle."
+        ),
     )
 
 
@@ -171,7 +190,10 @@ class NodeCatalogVisibilityResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     field: str = Field(default=..., description="Name of the controlling field")
-    equals: Any = Field(default=..., description="Value that makes this field visible")
+    equals: Any = Field(default=None, description="Value that makes this field visible")
+    not_equals: Any = Field(
+        default=None, description="Value that makes this field hidden"
+    )
 
 
 class NodeCatalogFieldUIResponse(BaseModel):
@@ -214,6 +236,9 @@ class NodeCatalogGraphResponse(BaseModel):
     has_output: bool = Field(default=..., description="Node has output handle")
     input_port: PortType | None = Field(default=None, description="Input port type")
     output_port: PortType | None = Field(default=None, description="Output port type")
+    output_handles: list[str] | None = Field(
+        default=None, description="Named output branches, if any"
+    )
 
 
 class NodeCatalogItemResponse(BaseModel):

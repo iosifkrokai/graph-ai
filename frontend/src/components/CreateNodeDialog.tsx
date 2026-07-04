@@ -10,7 +10,7 @@ import type {
 import { useLlmProviders } from '../hooks/useLlmProviders'
 import { useProviderModels } from '../hooks/useProviderModels'
 import { useTelegramBots } from '../hooks/useTelegramBots'
-import { validateFields } from '../lib/validation'
+import { matchesVisibility, validateFields } from '../lib/validation'
 import { NumberInput } from './NumberInput'
 
 interface CreateNodeDialogProps {
@@ -246,7 +246,7 @@ export function CreateNodeDialog({
         if (!field.visible_when) {
           return true
         }
-        return data[field.visible_when.field] === field.visible_when.equals
+        return matchesVisibility(field.visible_when, data[field.visible_when.field])
       }),
     [fields, data],
   )
@@ -263,10 +263,7 @@ export function CreateNodeDialog({
       // depends on this one once it's no longer visible, so a hidden
       // field's stale value never gets saved silently.
       for (const dependent of fields) {
-        if (
-          dependent.visible_when?.field === name &&
-          dependent.visible_when.equals !== value
-        ) {
+        if (dependent.visible_when?.field === name && !matchesVisibility(dependent.visible_when, value)) {
           next[dependent.name] = null
         }
       }

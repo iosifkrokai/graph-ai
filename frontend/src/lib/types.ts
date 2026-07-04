@@ -41,6 +41,7 @@ export interface EdgeCreatePayload {
   workflow_id: number
   source_node_id: number
   target_node_id: number
+  source_handle?: string | null
 }
 
 export interface EdgeResponse {
@@ -48,6 +49,7 @@ export interface EdgeResponse {
   workflow_id: number
   source_node_id: number
   target_node_id: number
+  source_handle: string | null
 }
 
 export interface Execution {
@@ -128,6 +130,7 @@ export interface NodeCatalogGraph {
   has_output: boolean
   input_port: PortType | null
   output_port: PortType | null
+  output_handles: string[] | null
 }
 
 export interface NodeCatalogFieldUI {
@@ -145,6 +148,7 @@ export interface NodeCatalogFieldDataSource {
 export interface NodeCatalogFieldVisibility {
   field: string
   equals: unknown
+  not_equals: unknown
 }
 
 export interface NodeCatalogField {

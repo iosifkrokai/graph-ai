@@ -7,7 +7,7 @@ import httpx
 from constants.timeout import DEFAULT_TIMEOUT
 from enums import NodeType, PortType, ValidatorType
 from exceptions import ExecutionGraphValidationError, WebSearchConnectionError
-from nodes.base import NodeExecutionContext
+from nodes.base import NodeExecutionContext, NodeExecutionResult
 from nodes.definition import NodeDefinition, NodeHandlerDeps
 from schemas import (
     NodeFieldSpec,
@@ -24,7 +24,7 @@ class WebSearchNodeHandler:
     _MIN_RESULTS = 1
     _MAX_RESULTS = 10
 
-    async def execute(self, context: NodeExecutionContext) -> str:
+    async def execute(self, context: NodeExecutionContext) -> NodeExecutionResult:
         """Run one web search node and return aggregated text results."""
         query = self._build_query(context)
         max_results = self._read_max_results(context)
@@ -32,8 +32,8 @@ class WebSearchNodeHandler:
         lines = self._format_results(payload=payload, max_results=max_results)
 
         if lines:
-            return "\n".join(lines)
-        return f"No search results found for: {query}"
+            return NodeExecutionResult(output="\n".join(lines))
+        return NodeExecutionResult(output=f"No search results found for: {query}")
 
     def _build_query(self, context: NodeExecutionContext) -> str:
         """Build query text from node inputs."""

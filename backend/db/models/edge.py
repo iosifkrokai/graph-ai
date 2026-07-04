@@ -1,6 +1,6 @@
 """Edge model."""
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.models import BaseWithID
@@ -28,4 +28,9 @@ class Edge(BaseWithID):
         nullable=False,
         index=True,
         comment="Target node ID",
+    )
+    source_handle: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+        comment="Named output handle on the source node (None = default handle)",
     )

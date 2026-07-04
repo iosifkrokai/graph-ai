@@ -1,7 +1,7 @@
 """Input node handler."""
 
 from enums import InputNodeFormat, NodeType, PortType, ValidatorType
-from nodes.base import NodeExecutionContext
+from nodes.base import NodeExecutionContext, NodeExecutionResult
 from nodes.definition import NodeDefinition, NodeHandlerDeps
 from schemas import (
     NodeFieldDataSource,
@@ -17,9 +17,9 @@ from schemas import (
 class InputNodeHandler:
     """Handler for input nodes."""
 
-    async def execute(self, context: NodeExecutionContext) -> str:
+    async def execute(self, context: NodeExecutionContext) -> NodeExecutionResult:
         """Return execution input value."""
-        return context.input_value
+        return NodeExecutionResult(output=context.input_value)
 
 
 def _build_handler(deps: NodeHandlerDeps) -> InputNodeHandler:

@@ -81,7 +81,7 @@ class TestNodeTokenSink:
                 "LLMProviderRepository", _StubProviderRepository()
             )
         )
-        output = await handler.execute(
+        result = await handler.execute(
             NodeExecutionContext(
                 session=cast("AsyncSession", None),
                 workflow_owner_id=1,
@@ -94,7 +94,7 @@ class TestNodeTokenSink:
 
         if collected != _DELTAS:
             pytest.fail("Each delta should have been forwarded to on_token")
-        if output != "".join(_DELTAS):
+        if result.output != "".join(_DELTAS):
             pytest.fail("Node output should be the concatenated deltas")
 
 

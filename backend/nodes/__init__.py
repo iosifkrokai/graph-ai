@@ -1,6 +1,7 @@
 """Execution node handlers package."""
 
-from nodes.base import NodeExecutionContext, NodeHandler, OnToken
+from nodes.base import NodeExecutionContext, NodeExecutionResult, NodeHandler, OnToken
+from nodes.condition import ConditionNodeHandler
 from nodes.definition import NodeDefinition, NodeHandlerDeps, ports_compatible
 from nodes.http_request import HTTPRequestNodeHandler
 from nodes.input import InputNodeHandler
@@ -18,11 +19,13 @@ from nodes.web_search import WebSearchNodeHandler
 
 __all__ = [
     "NODE_DEFINITIONS",
+    "ConditionNodeHandler",
     "HTTPRequestNodeHandler",
     "InputNodeHandler",
     "LLMNodeHandler",
     "NodeDefinition",
     "NodeExecutionContext",
+    "NodeExecutionResult",
     "NodeHandler",
     "NodeHandlerDeps",
     "NodeHandlerRegistry",

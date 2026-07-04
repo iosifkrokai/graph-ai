@@ -99,8 +99,23 @@ against the actual code as of this writing (not carried forward from stale notes
       `telegram_chat_id` for manual (non-Telegram-triggered) runs. Field
       visibility (`visible_when`) is fully declarative — adding a future format
       doesn't require new frontend branches.
-- [ ] Condition/Router, Code/Transform, RAG/Vector search, Loop/Map — deferred,
-      need dedicated engine work (branch selection, sandboxing, vector DB).
+- [x] **Condition/Router node**: binary if/else branching (`NodeType.CONDITION`,
+      `nodes/condition.py`) — evaluates `contains`/`equals`/`regex`/`not_empty`
+      against upstream text and routes to a `true`/`false` output handle.
+      Required real engine work: `NodeHandler.execute` now returns a
+      `NodeExecutionResult(output, selected_handle)` instead of a bare string;
+      edges carry an optional `source_handle` (new column + `NodeGraphSpec.
+      output_handles`); the wave/serial schedulers propagate per-node
+      liveness so only the taken branch executes — the other gets a
+      `SKIPPED` `node_executions` row and is excluded from downstream
+      `parent_values`, with a clear failure if no live path reaches OUTPUT.
+      Frontend renders one named `Handle` per branch (`CustomNodes.tsx`) and
+      threads `sourceHandle` through edge create/load
+      (`useGraphState.ts`/`GraphCanvas.tsx`). `NodeFieldVisibility` gained a
+      `not_equals` sibling to `equals` for the value field's visibility rule.
+- [ ] Code/Transform, RAG/Vector search, Loop/Map — still deferred, need
+      dedicated engine work (sandboxing, vector DB, re-entrant subgraph
+      execution for Loop/Map).
 
 ## Phase 4 — UX consolidation ✅ done (first pass), items below still open
 

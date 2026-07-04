@@ -6,7 +6,7 @@ from db.repositories import LLMProviderRepository
 from enums import NodeType, PortType, ValidatorType
 from exceptions import ExecutionGraphValidationError
 from llm import create_llm_client
-from nodes.base import NodeExecutionContext
+from nodes.base import NodeExecutionContext, NodeExecutionResult
 from nodes.definition import NodeDefinition, NodeHandlerDeps
 from schemas import (
     ChatMessage,
@@ -67,7 +67,7 @@ class LLMNodeHandler:
         """
         self._llm_provider_repository = llm_provider_repository
 
-    async def execute(self, context: NodeExecutionContext) -> str:
+    async def execute(self, context: NodeExecutionContext) -> NodeExecutionResult:
         """Run one LLM node.
 
         Args:
@@ -124,7 +124,7 @@ class LLMNodeHandler:
 
         if context.on_token is None:
             response = await client.chat(model=model, messages=messages, params=params)
-            return response.message.content
+            return NodeExecutionResult(output=response.message.content)
 
         chunks: list[str] = []
         async for delta in client.stream_chat(
@@ -133,7 +133,7 @@ class LLMNodeHandler:
             chunks.append(delta)
             await context.on_token(delta)
 
-        return "".join(chunks)
+        return NodeExecutionResult(output="".join(chunks))
 
 
 def _build_handler(deps: NodeHandlerDeps) -> LLMNodeHandler:
