@@ -1,6 +1,7 @@
 """Execution node handlers package."""
 
 from nodes.base import NodeExecutionContext, NodeExecutionResult, NodeHandler, OnToken
+from nodes.code_transform import CodeTransformNodeHandler
 from nodes.condition import ConditionNodeHandler
 from nodes.definition import NodeDefinition, NodeHandlerDeps, ports_compatible
 from nodes.http_request import HTTPRequestNodeHandler
@@ -19,6 +20,7 @@ from nodes.web_search import WebSearchNodeHandler
 
 __all__ = [
     "NODE_DEFINITIONS",
+    "CodeTransformNodeHandler",
     "ConditionNodeHandler",
     "HTTPRequestNodeHandler",
     "InputNodeHandler",

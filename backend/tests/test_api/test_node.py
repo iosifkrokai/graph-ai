@@ -31,6 +31,7 @@ def _extra_fields_by_type(node_type: NodeType, *, llm_provider_id: int | None) -
             "value": "hello",
             "case_sensitive": "false",
         },
+        NodeType.CODE_TRANSFORM: {"code": "output = input"},
         NodeType.OUTPUT: {"format": OutputNodeFormat.TXT},
     }
     return by_type[node_type]
@@ -51,6 +52,7 @@ EXPECTED_FIELDS_BY_TYPE: dict[NodeType, set[str]] = {
     NodeType.TEMPLATE: {"label", "template"},
     NodeType.HTTP_REQUEST: {"label", "url", "method"},
     NodeType.CONDITION: {"label", "condition_type", "value", "case_sensitive"},
+    NodeType.CODE_TRANSFORM: {"label", "code"},
     NodeType.OUTPUT: {"label", "format"},
 }
 

@@ -12,6 +12,7 @@ class NodeType(StrEnum):
     TEMPLATE = auto()
     HTTP_REQUEST = auto()
     CONDITION = auto()
+    CODE_TRANSFORM = auto()
     OUTPUT = auto()
 
 

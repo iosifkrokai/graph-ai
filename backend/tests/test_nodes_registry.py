@@ -8,6 +8,7 @@ from enums import NodeType, PortType
 from exceptions import ExecutionGraphValidationError
 from nodes import (
     NODE_DEFINITIONS,
+    CodeTransformNodeHandler,
     ConditionNodeHandler,
     HTTPRequestNodeHandler,
     TemplateNodeHandler,
@@ -392,4 +393,107 @@ class TestConditionNode:
         with pytest.raises(ExecutionGraphValidationError):
             await handler.execute(
                 _context({"condition_type": "bogus", "value": "x"}, parent_values=["x"])
+            )
+
+
+class TestCodeTransformNode:
+    """Tests for the code/transform node handler."""
+
+    @pytest.mark.asyncio
+    async def test_transforms_input_text(self) -> None:
+        """Code runs against the upstream text and returns the output."""
+        handler = CodeTransformNodeHandler()
+        result = await handler.execute(
+            _context(
+                {"code": "output = input.upper()"},
+                parent_values=["hello world"],
+            )
+        )
+        if result.output != "HELLO WORLD":
+            pytest.fail("Code node did not transform the input text")
+
+    @pytest.mark.asyncio
+    async def test_json_module_is_available(self) -> None:
+        """The sandbox exposes the json module for parsing/serializing."""
+        handler = CodeTransformNodeHandler()
+        result = await handler.execute(
+            _context(
+                {
+                    "code": (
+                        "data = json.loads(input)\noutput = str(data['a'] + data['b'])"
+                    )
+                },
+                parent_values=['{"a": 1, "b": 2}'],
+            )
+        )
+        if result.output != "3":
+            pytest.fail("Code node could not use the json module")
+
+    @pytest.mark.asyncio
+    async def test_non_string_output_is_json_encoded(self) -> None:
+        """A non-string output value is coerced via JSON encoding."""
+        handler = CodeTransformNodeHandler()
+        result = await handler.execute(
+            _context(
+                {"code": "output = [x.strip() for x in input.split(',')]"},
+                parent_values=["a, b ,c"],
+            )
+        )
+        if result.output != '["a", "b", "c"]':
+            pytest.fail("Non-string output should be JSON-encoded")
+
+    @pytest.mark.asyncio
+    async def test_missing_code_rejected(self) -> None:
+        """Empty code raises a graph validation error."""
+        handler = CodeTransformNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(_context({}, parent_values=["x"]))
+
+    @pytest.mark.asyncio
+    async def test_syntax_error_rejected(self) -> None:
+        """A syntax error in the code raises a graph validation error."""
+        handler = CodeTransformNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(_context({"code": "output = ("}, parent_values=["x"]))
+
+    @pytest.mark.asyncio
+    async def test_runtime_error_rejected(self) -> None:
+        """A runtime exception in the code raises a graph validation error."""
+        handler = CodeTransformNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context({"code": "output = 1 / 0"}, parent_values=["x"])
+            )
+
+    @pytest.mark.asyncio
+    async def test_missing_output_assignment_rejected(self) -> None:
+        """Code that never assigns 'output' raises a graph validation error."""
+        handler = CodeTransformNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context({"code": "result = input"}, parent_values=["x"])
+            )
+
+    @pytest.mark.asyncio
+    async def test_import_is_blocked(self) -> None:
+        """Attempting to import a module raises a graph validation error."""
+        handler = CodeTransformNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context(
+                    {"code": "import os\noutput = os.getcwd()"},
+                    parent_values=["x"],
+                )
+            )
+
+    @pytest.mark.asyncio
+    async def test_file_access_is_blocked(self) -> None:
+        """Attempting to open a file raises a graph validation error."""
+        handler = CodeTransformNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context(
+                    {"code": "output = open('/etc/passwd').read()"},
+                    parent_values=["x"],
+                )
             )

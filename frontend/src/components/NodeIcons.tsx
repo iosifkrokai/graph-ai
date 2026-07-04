@@ -89,6 +89,23 @@ export function HttpRequestIcon(props: IconProps) {
   )
 }
 
+export function CodeTransformIcon(props: IconProps) {
+  return (
+    <svg width={SIZE} height={SIZE} viewBox="0 0 16 16" style={STYLE} fill="none" {...props}>
+      <rect x="1" y="7" width="2" height="2" fill="var(--accent)" />
+      <rect x="3" y="5" width="2" height="2" fill="var(--accent)" />
+      <rect x="3" y="9" width="2" height="2" fill="var(--accent)" />
+      <rect x="11" y="5" width="2" height="2" fill="var(--accent)" />
+      <rect x="11" y="9" width="2" height="2" fill="var(--accent)" />
+      <rect x="13" y="7" width="2" height="2" fill="var(--accent)" />
+      <rect x="9" y="3" width="2" height="2" fill="var(--accent-2)" />
+      <rect x="7" y="6" width="2" height="2" fill="var(--accent-2)" />
+      <rect x="5" y="9" width="2" height="2" fill="var(--accent-2)" />
+      <rect x="5" y="11" width="2" height="2" fill="var(--accent-2)" />
+    </svg>
+  )
+}
+
 export function ConditionIcon(props: IconProps) {
   return (
     <svg width={SIZE} height={SIZE} viewBox="0 0 16 16" style={STYLE} fill="none" {...props}>
@@ -121,6 +138,10 @@ export function NodeIcon({ iconKey }: { iconKey: string }) {
 
   if (iconKey === 'condition') {
     return <ConditionIcon />
+  }
+
+  if (iconKey === 'code_transform') {
+    return <CodeTransformIcon />
   }
 
   if (iconKey === 'output') {
