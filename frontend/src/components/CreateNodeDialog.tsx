@@ -5,9 +5,11 @@ import type {
   LlmProvider,
   NodeCatalogItem,
   NodeCatalogField,
+  TelegramBot,
 } from '../lib/types'
 import { useLlmProviders } from '../hooks/useLlmProviders'
 import { useProviderModels } from '../hooks/useProviderModels'
+import { useTelegramBots } from '../hooks/useTelegramBots'
 import { validateFields } from '../lib/validation'
 import { NumberInput } from './NumberInput'
 
@@ -172,6 +174,31 @@ function ModelField({
   )
 }
 
+function TelegramBotField({
+  bots,
+  value,
+  onChange,
+}: {
+  bots: TelegramBot[]
+  value: unknown
+  onChange: (value: number) => void
+}) {
+  return (
+    <select
+      className="pixel-input"
+      value={String(value ?? '')}
+      onChange={(event) => onChange(Number(event.target.value))}
+    >
+      <option value="">-- select bot --</option>
+      {bots.map((bot) => (
+        <option key={bot.id} value={bot.id}>
+          {bot.name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 export function CreateNodeDialog({
   nodeSpec,
   initialData,
@@ -189,6 +216,9 @@ export function CreateNodeDialog({
   const hasModelDatasource = fields.some(
     (field) => field.datasource?.kind === 'llm_model',
   )
+  const hasTelegramBotDatasource = fields.some(
+    (field) => field.datasource?.kind === 'telegram_bot',
+  )
 
   const selectedProviderRaw = Number(data['llm_provider_id'] ?? 0)
   const selectedProviderId =
@@ -203,6 +233,23 @@ export function CreateNodeDialog({
     providerId: selectedProviderId,
     enabled: hasModelDatasource,
   })
+  const { bots } = useTelegramBots({
+    enabled: hasTelegramBotDatasource,
+  })
+
+  const visibleFields = useMemo(
+    () =>
+      fields.filter((field) => {
+        // Declarative conditional visibility, same rule as InspectorPanel:
+        // a field with visible_when only shows once its controlling sibling
+        // field holds the required value.
+        if (!field.visible_when) {
+          return true
+        }
+        return data[field.visible_when.field] === field.visible_when.equals
+      }),
+    [fields, data],
+  )
 
   const validationErrors = useMemo(
     () => validateFields(fields, data),
@@ -210,7 +257,21 @@ export function CreateNodeDialog({
   )
 
   function updateField(name: string, value: string | number | null) {
-    setData((previous) => ({ ...previous, [name]: value }))
+    setData((previous) => {
+      const next = { ...previous, [name]: value }
+      // Generic clear-on-hide: reset any sibling field whose visibility
+      // depends on this one once it's no longer visible, so a hidden
+      // field's stale value never gets saved silently.
+      for (const dependent of fields) {
+        if (
+          dependent.visible_when?.field === name &&
+          dependent.visible_when.equals !== value
+        ) {
+          next[dependent.name] = null
+        }
+      }
+      return next
+    })
     setErrors((previous) => {
       if (!(name in previous)) {
         return previous
@@ -243,6 +304,16 @@ export function CreateNodeDialog({
           models={models}
           value={value}
           onChange={(model) => updateField(field.name, model)}
+        />
+      )
+    }
+
+    if (field.ui.widget === 'telegram_bot') {
+      return (
+        <TelegramBotField
+          bots={bots}
+          value={value}
+          onChange={(botId) => updateField(field.name, botId)}
         />
       )
     }
@@ -323,7 +394,7 @@ export function CreateNodeDialog({
       <div className="pixel-panel modal-scroll max-h-[80vh] w-full max-w-xl overflow-y-auto">
         <div className="pixel-section-title">Create {nodeSpec.label} Node</div>
         <div className="mt-4 flex flex-col gap-3">
-          {fields.map((field) => (
+          {visibleFields.map((field) => (
             <label key={field.name} className="pixel-label">
               {field.ui.label}
               {renderField(field)}

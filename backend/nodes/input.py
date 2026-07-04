@@ -8,6 +8,7 @@ from schemas import (
     NodeFieldDataSourceKind,
     NodeFieldSpec,
     NodeFieldUI,
+    NodeFieldVisibility,
     NodeFieldWidget,
     NodeGraphSpec,
 )
@@ -64,9 +65,12 @@ DEFINITION = NodeDefinition(
             ui=NodeFieldUI(
                 widget=NodeFieldWidget.TELEGRAM_BOT,
                 label="Telegram Bot",
-                help="Required when Format is Telegram: the bot to poll for messages.",
+                help="The bot to poll for messages.",
             ),
             datasource=NodeFieldDataSource(kind=NodeFieldDataSourceKind.TELEGRAM_BOT),
+            visible_when=NodeFieldVisibility(
+                field="format", equals=InputNodeFormat.TELEGRAM.value
+            ),
         ),
     ),
     build_handler=_build_handler,

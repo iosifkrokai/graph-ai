@@ -49,6 +49,23 @@ class NodeFieldDataSource(BaseModel):
     depends_on: str | None = Field(default=None, description="Dependency field name")
 
 
+class NodeFieldVisibility(BaseModel):
+    """Conditional visibility rule for a node field.
+
+    The field is only shown (and should only be persisted) when the named
+    sibling field's current value equals ``equals``. This keeps format-gated
+    fields (e.g. a Telegram bot picker that only makes sense for
+    ``format=telegram``) declarative in the catalog instead of hardcoded per
+    widget in the frontend — adding a new gated field for a future format
+    means adding one of these, not a new frontend branch.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    field: str = Field(default=..., description="Name of the controlling field")
+    equals: Any = Field(default=..., description="Value that makes this field visible")
+
+
 class NodeFieldSpec(BaseModel):
     """Schema definition for a single node data field."""
 
@@ -65,6 +82,10 @@ class NodeFieldSpec(BaseModel):
     datasource: NodeFieldDataSource | None = Field(
         default=None,
         description="Dynamic datasource definition",
+    )
+    visible_when: NodeFieldVisibility | None = Field(
+        default=None,
+        description="Show this field only when the rule is satisfied",
     )
 
 
@@ -144,6 +165,15 @@ class NodeCatalogDataSourceResponse(BaseModel):
     depends_on: str | None = Field(default=None, description="Dependency field name")
 
 
+class NodeCatalogVisibilityResponse(BaseModel):
+    """Conditional visibility metadata for a catalog field."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    field: str = Field(default=..., description="Name of the controlling field")
+    equals: Any = Field(default=..., description="Value that makes this field visible")
+
+
 class NodeCatalogFieldUIResponse(BaseModel):
     """UI metadata for a catalog field."""
 
@@ -168,6 +198,10 @@ class NodeCatalogFieldResponse(BaseModel):
     datasource: NodeCatalogDataSourceResponse | None = Field(
         default=None,
         description="Dynamic datasource metadata",
+    )
+    visible_when: NodeCatalogVisibilityResponse | None = Field(
+        default=None,
+        description="Conditional visibility rule",
     )
 
 

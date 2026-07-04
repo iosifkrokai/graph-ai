@@ -446,7 +446,22 @@ export function InspectorPanel({
   }, [hasTelegramBotDatasource])
 
   function updateField(key: string, value: string | number | null) {
-    setDraftData((current) => ({ ...current, [key]: value }))
+    setDraftData((current) => {
+      const next = { ...current, [key]: value }
+      // Generic clear-on-hide: any sibling field whose visibility depends on
+      // this one gets reset once it's no longer visible, so a hidden field's
+      // stale value (e.g. a bot ID left over from a different format) never
+      // gets saved silently alongside the new value.
+      for (const dependent of fields) {
+        if (
+          dependent.visible_when?.field === key &&
+          dependent.visible_when.equals !== value
+        ) {
+          next[dependent.name] = null
+        }
+      }
+      return next
+    })
   }
 
   function renderField(field: NodeCatalogField) {
@@ -552,19 +567,33 @@ export function InspectorPanel({
             <div className="text-xs text-[var(--muted)]">
               Type: <span className="text-[var(--accent)]">{nodeType}</span>
             </div>
-            {fields.map((field) => (
-              <label key={field.name} className="pixel-label">
-                {field.ui.label}
-                {renderField(field)}
-                {validationErrors[field.name] ? (
-                  <span className="text-xs text-[var(--danger)]">
-                    {validationErrors[field.name]}
-                  </span>
-                ) : field.ui.help ? (
-                  <span className="text-xs text-[var(--muted)]">{field.ui.help}</span>
-                ) : null}
-              </label>
-            ))}
+            {fields
+              .filter((field) => {
+                // Declarative conditional visibility: a field with
+                // visible_when is only shown once its controlling sibling
+                // field holds the required value. Driven entirely by the
+                // catalog, so a future format-gated field needs no new
+                // frontend branch — just a visible_when in its NodeFieldSpec.
+                if (!field.visible_when) {
+                  return true
+                }
+                return draftData[field.visible_when.field] === field.visible_when.equals
+              })
+              .map((field) => (
+                <label key={field.name} className="pixel-label">
+                  {field.ui.label}
+                  {renderField(field)}
+                  {validationErrors[field.name] ? (
+                    <span className="text-xs text-[var(--danger)]">
+                      {validationErrors[field.name]}
+                    </span>
+                  ) : field.ui.help ? (
+                    <span className="text-xs text-[var(--muted)]">
+                      {field.ui.help}
+                    </span>
+                  ) : null}
+                </label>
+              ))}
           </div>
         )}
       </div>

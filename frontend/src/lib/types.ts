@@ -142,6 +142,11 @@ export interface NodeCatalogFieldDataSource {
   depends_on: string | null
 }
 
+export interface NodeCatalogFieldVisibility {
+  field: string
+  equals: unknown
+}
+
 export interface NodeCatalogField {
   name: string
   required: boolean
@@ -149,6 +154,7 @@ export interface NodeCatalogField {
   ui: NodeCatalogFieldUI
   default: unknown
   datasource: NodeCatalogFieldDataSource | null
+  visible_when: NodeCatalogFieldVisibility | null
 }
 
 export interface NodeCatalogItem {
