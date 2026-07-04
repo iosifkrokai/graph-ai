@@ -48,10 +48,9 @@ export function AppShell({
           <button
             type="button"
             className="pixel-icon"
-            title="Settings"
             onClick={() => setShowSettings(true)}
           >
-            ⚙
+            Settings
           </button>
           <UserMenu
             email={email}
