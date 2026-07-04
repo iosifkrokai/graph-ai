@@ -74,6 +74,23 @@ DEFINITION = NodeDefinition(
                 field="format", equals=OutputNodeFormat.TELEGRAM.value
             ),
         ),
+        NodeFieldSpec(
+            name="telegram_chat_id",
+            required=False,
+            validators={},
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.OPTIONAL_NUMBER,
+                label="Telegram Chat ID",
+                help=(
+                    "Optional. Pin a fixed destination chat so this also works "
+                    "for manual (non-Telegram-triggered) runs. Leave blank to "
+                    "reply to whichever chat triggered the run."
+                ),
+            ),
+            visible_when=NodeFieldVisibility(
+                field="format", equals=OutputNodeFormat.TELEGRAM.value
+            ),
+        ),
     ),
     build_handler=_build_handler,
 )

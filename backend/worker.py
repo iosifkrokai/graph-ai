@@ -69,8 +69,11 @@ async def _reply_via_telegram(session: "AsyncSession", execution_id: int) -> Non
     """Send a finished execution's result back to Telegram, if configured to.
 
     The workflow's Output node must have ``format=telegram`` and a
-    ``telegram_bot_id`` set. Best-effort: a Telegram delivery failure must not
-    surface as a failure of an already-completed execution.
+    ``telegram_bot_id`` set. The destination chat is either the Output node's
+    own pinned ``telegram_chat_id`` (so this also works for manual, non-
+    Telegram-triggered runs) or, absent that, the chat that triggered the run.
+    Best-effort: a Telegram delivery failure must not surface as a failure of
+    an already-completed execution.
 
     Args:
         session: Database session.
@@ -78,7 +81,7 @@ async def _reply_via_telegram(session: "AsyncSession", execution_id: int) -> Non
 
     """
     execution = await ExecutionRepository().get_by(session=session, id=execution_id)
-    if execution is None or execution.telegram_chat_id is None:
+    if execution is None:
         return
 
     output_node = await NodeRepository().get_by(
@@ -94,6 +97,12 @@ async def _reply_via_telegram(session: "AsyncSession", execution_id: int) -> Non
     if bot is None:
         return
 
+    chat_id = _resolve_reply_chat_id(
+        node_data=output_node.data, triggered_chat_id=execution.telegram_chat_id
+    )
+    if chat_id is None:
+        return
+
     if execution.status is ExecutionStatus.SUCCESS:
         output = execution.output_data or {}
         text = output.get("value", "") if isinstance(output, dict) else ""
@@ -105,13 +114,34 @@ async def _reply_via_telegram(session: "AsyncSession", execution_id: int) -> Non
     try:
         await send_message(
             bot_token=decrypt(bot.bot_token),
-            chat_id=execution.telegram_chat_id,
+            chat_id=chat_id,
             text=text or "(empty output)",
         )
     except TelegramAPIError:
         logger.exception(
             "Failed to deliver Telegram reply for execution %s", execution_id
         )
+
+
+def _resolve_reply_chat_id(
+    node_data: dict[str, Any], triggered_chat_id: int | None
+) -> int | None:
+    """Pick the chat to reply to: a pinned chat ID, else the triggering chat.
+
+    Args:
+        node_data: The Output node's configuration data.
+        triggered_chat_id: The chat that triggered this run via Telegram
+            polling, if any.
+
+    Returns:
+        The chat ID to reply to, or ``None`` if neither is available.
+
+    """
+    pinned_chat_id = node_data.get("telegram_chat_id")
+    if isinstance(pinned_chat_id, int):
+        return pinned_chat_id
+
+    return triggered_chat_id
 
 
 async def _resolve_telegram_bot(

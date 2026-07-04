@@ -21,6 +21,7 @@ from usecases import ExecutionUsecase
 
 _FAKE_CHAT_ID = 999
 _FAKE_UPDATE_ID = 501
+_PINNED_CHAT_ID = 555
 
 
 class _FakeRedis:
@@ -223,6 +224,78 @@ class TestTelegramReply(BaseTestCase):
         _, chat_id, text = fake_send_message.calls[0]
         if chat_id != _FAKE_CHAT_ID:
             pytest.fail("Reply was sent to the wrong chat")
+        if text != "hello":
+            pytest.fail("Reply did not carry the execution output")
+
+    @pytest.mark.asyncio
+    async def test_sends_reply_to_pinned_chat_for_manual_run(
+        self, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A manual run still replies when the Output node pins a chat ID."""
+        worker_sessionmaker = async_sessionmaker(
+            bind=test_engine, expire_on_commit=False
+        )
+        monkeypatch.setattr(worker_module, "async_session", worker_sessionmaker)
+        fake_send_message = _FakeSendMessage()
+        _FakeSendMessage.calls = []
+        monkeypatch.setattr(worker_module, "send_message", fake_send_message)
+
+        user = await UserFactory.create_async(session=self.session)
+        bot = await TelegramBotFactory.create_async(
+            session=self.session, user_id=user.id
+        )
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user.id
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={
+                "label": "Output",
+                "format": "telegram",
+                "telegram_bot_id": bot.id,
+                "telegram_chat_id": _PINNED_CHAT_ID,
+            },
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+
+        async def _noop_enqueue(_execution_id: int) -> None:
+            """Skip the real ARQ enqueue; the test runs the job inline."""
+
+        # No telegram_chat_id passed: this mirrors a manual run through the
+        # public API, which never sets it.
+        execution = await ExecutionUsecase().create_execution(
+            session=self.session,
+            user_id=user.id,
+            data=ExecutionCreate(
+                workflow_id=workflow.id,
+                input_data=ExecutionInputPayload(value="hello"),
+            ),
+            enqueue=_noop_enqueue,
+        )
+
+        await worker_module.run_execution_task({"redis": _FakeRedis()}, execution.id)
+
+        if len(fake_send_message.calls) != 1:
+            pytest.fail(
+                f"Expected exactly one Telegram reply, got "
+                f"{len(fake_send_message.calls)}"
+            )
+        _, chat_id, text = fake_send_message.calls[0]
+        if chat_id != _PINNED_CHAT_ID:
+            pytest.fail("Reply was not sent to the pinned chat")
         if text != "hello":
             pytest.fail("Reply did not carry the execution output")
 
