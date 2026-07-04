@@ -1,9 +1,7 @@
 import { type ReactNode, useState } from 'react'
 
-import type { ApiError, Execution } from '../lib/types'
-import { ExecutionHistory } from './ExecutionHistory'
-import { ProviderManager } from './ProviderManager'
-import { TelegramBotManager } from './TelegramBotManager'
+import type { ApiError } from '../lib/types'
+import { SettingsModal } from './SettingsModal'
 import { UserMenu } from './UserMenu'
 
 export type ViewMode = 'build' | 'chat'
@@ -14,7 +12,6 @@ interface AppShellProps {
   executionStatus: string | null
   error: string | null
   viewMode: ViewMode
-  executions: Execution[]
   onViewModeChange: (mode: ViewMode) => void
   onLogout: () => void
   onDeleteAccount: () => void
@@ -28,16 +25,13 @@ export function AppShell({
   executionStatus,
   error,
   viewMode,
-  executions,
   onViewModeChange,
   onLogout,
   onDeleteAccount,
   onError,
   children,
 }: AppShellProps) {
-  const [showProviders, setShowProviders] = useState(false)
-  const [showTelegramBots, setShowTelegramBots] = useState(false)
-  const [showExecutions, setShowExecutions] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
 
   const mainClassName =
     viewMode === 'build'
@@ -75,24 +69,11 @@ export function AppShell({
           ) : null}
           <button
             type="button"
-            className="pixel-button ghost small"
-            onClick={() => setShowProviders(true)}
+            className="pixel-icon"
+            title="Settings"
+            onClick={() => setShowSettings(true)}
           >
-            Providers
-          </button>
-          <button
-            type="button"
-            className="pixel-button ghost small"
-            onClick={() => setShowTelegramBots(true)}
-          >
-            Telegram Bots
-          </button>
-          <button
-            type="button"
-            className="pixel-button ghost small"
-            onClick={() => setShowExecutions(true)}
-          >
-            Executions
+            ⚙
           </button>
           <UserMenu
             email={email}
@@ -101,22 +82,10 @@ export function AppShell({
           />
         </div>
       </header>
-      {showProviders ? (
-        <ProviderManager
-          onClose={() => setShowProviders(false)}
+      {showSettings ? (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
           onError={onError}
-        />
-      ) : null}
-      {showTelegramBots ? (
-        <TelegramBotManager
-          onClose={() => setShowTelegramBots(false)}
-          onError={onError}
-        />
-      ) : null}
-      {showExecutions ? (
-        <ExecutionHistory
-          executions={executions}
-          onClose={() => setShowExecutions(false)}
         />
       ) : null}
       {error ? <div className="pixel-banner">{error}</div> : null}

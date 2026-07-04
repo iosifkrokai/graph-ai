@@ -9,6 +9,7 @@ import type {
   LlmProviderCreatePayload,
   NodeCatalogItem,
   NodeCreatePayload,
+  NodeExecutionResult,
   NodeResponse,
   NodeUpdatePayload,
   RunInputPayload,
@@ -168,6 +169,12 @@ export async function getExecutions(
   workflowId: number,
 ): Promise<Execution[]> {
   return request<Execution[]>(`/executions?workflow_id=${workflowId}`)
+}
+
+export async function getExecutionNodeResults(
+  executionId: number,
+): Promise<NodeExecutionResult[]> {
+  return request<NodeExecutionResult[]>(`/executions/${executionId}/nodes`)
 }
 
 export async function streamExecution(

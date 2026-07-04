@@ -12,7 +12,7 @@ import { useExecutions } from './hooks/useExecutions'
 import { useGraphState } from './hooks/useGraphState'
 import { useNodeCatalog } from './hooks/useNodeCatalog'
 import { useWorkflowState } from './hooks/useWorkflowState'
-import type { ApiError, NodeType } from './lib/types'
+import type { ApiError, NodeType, PortType } from './lib/types'
 
 interface NodeCreateDraft {
   type: NodeType
@@ -109,6 +109,16 @@ export function App() {
     () => nodes.filter((node) => node.type === 'output'),
     [nodes],
   )
+  const outputPortByNodeId = useMemo(() => {
+    const map = new Map<number, PortType | null>()
+    for (const node of nodes) {
+      map.set(
+        Number(node.id),
+        nodeCatalogByType[node.type ?? '']?.graph.output_port ?? null,
+      )
+    }
+    return map
+  }, [nodes, nodeCatalogByType])
   const inputFormat = String(inputNodes[0]?.data?.format ?? 'txt')
   const runDisabledReason = useMemo((): string | null => {
     if (!activeWorkflowId) {
@@ -222,7 +232,6 @@ export function App() {
         onViewModeChange={setViewMode}
         onLogout={handleLogout}
         onDeleteAccount={handleDeleteAccount}
-        executions={executions}
         onError={handleError}
       >
         {viewMode === 'build' ? (
@@ -259,12 +268,14 @@ export function App() {
           <ChatPanel
             workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
             hasWorkflow={activeWorkflowId !== null}
+            activeWorkflowId={activeWorkflowId}
             executions={executions}
             liveTokens={liveTokens}
             lastExecution={lastExecution}
             runEnabled={runEnabled}
             runDisabledReason={runDisabledReason}
             loading={loading}
+            outputPortByNodeId={outputPortByNodeId}
             onRun={handleRun}
           />
         )}

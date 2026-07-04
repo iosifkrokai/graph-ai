@@ -1,30 +1,61 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { getExecutionNodeResults, getWorkflowVersions } from '../lib/api'
 import type { LiveTokens } from '../hooks/useExecutions'
-import type { Execution, ExecutionStatus, RunInputPayload } from '../lib/types'
+import type {
+  Execution,
+  ExecutionStatus,
+  NodeExecutionResult,
+  PortType,
+  RunInputPayload,
+} from '../lib/types'
+import { OutputRenderer } from './OutputRenderer'
 
 // Executions in these states are still being processed by the worker.
 const ACTIVE_STATUSES: ExecutionStatus[] = ['created', 'running']
 
+const STATUS_COLORS: Record<ExecutionStatus, string> = {
+  created: 'text-[var(--muted)]',
+  running: 'text-[var(--accent-2)]',
+  success: 'text-[var(--accent)]',
+  failed: 'text-[var(--danger)]',
+}
+
 interface ChatPanelProps {
   workflowName: string
   hasWorkflow: boolean
+  activeWorkflowId: number | null
   executions: Execution[]
   liveTokens: LiveTokens
   lastExecution: Execution | null
   runEnabled: boolean
   runDisabledReason: string | null
   loading: boolean
+  outputPortByNodeId: Map<number, PortType | null>
   onRun: (input: RunInputPayload) => void
 }
 
 interface ChatTurn {
   id: number
+  execution: Execution
   status: ExecutionStatus
   input: string
   output: string
   error: string | null
   isActive: boolean
+}
+
+function formatTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) {
+    return '—'
+  }
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function joinLiveTokens(liveTokens: LiveTokens): string {
@@ -47,6 +78,7 @@ function buildTurns(
         isActive && liveText ? liveText : String(execution.output_data?.value ?? '')
       return {
         id: execution.id,
+        execution,
         status: execution.status,
         input: String(execution.input_data?.value ?? ''),
         output: streamed,
@@ -59,15 +91,18 @@ function buildTurns(
 export function ChatPanel({
   workflowName,
   hasWorkflow,
+  activeWorkflowId,
   executions,
   liveTokens,
   lastExecution,
   runEnabled,
   runDisabledReason,
   loading,
+  outputPortByNodeId,
   onRun,
 }: ChatPanelProps) {
   const [draft, setDraft] = useState('')
+  const [versionNumbers, setVersionNumbers] = useState<Record<number, number>>({})
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const activeExecutionId = useMemo(
@@ -84,6 +119,30 @@ export function ChatPanel({
     () => buildTurns(executions, activeExecutionId, liveText),
     [executions, activeExecutionId, liveText],
   )
+
+  useEffect(() => {
+    if (activeWorkflowId === null) {
+      return
+    }
+    let cancelled = false
+    getWorkflowVersions(activeWorkflowId)
+      .then((versions) => {
+        if (cancelled) {
+          return
+        }
+        const map: Record<number, number> = {}
+        for (const version of versions) {
+          map[version.id] = version.version
+        }
+        setVersionNumbers(map)
+      })
+      .catch(() => {
+        // version labels are best-effort; ignore fetch failures
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeWorkflowId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -132,7 +191,16 @@ export function ChatPanel({
         ) : (
           <div className="flex flex-col gap-4">
             {turns.map((turn) => (
-              <ChatTurnView key={turn.id} turn={turn} />
+              <ChatTurnView
+                key={turn.id}
+                turn={turn}
+                versionNumber={
+                  turn.execution.version_id !== null
+                    ? versionNumbers[turn.execution.version_id]
+                    : undefined
+                }
+                outputPortByNodeId={outputPortByNodeId}
+              />
             ))}
             <div ref={bottomRef} />
           </div>
@@ -166,7 +234,31 @@ export function ChatPanel({
   )
 }
 
-function ChatTurnView({ turn }: { turn: ChatTurn }) {
+function ChatTurnView({
+  turn,
+  versionNumber,
+  outputPortByNodeId,
+}: {
+  turn: ChatTurn
+  versionNumber: number | undefined
+  outputPortByNodeId: Map<number, PortType | null>
+}) {
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [nodeResults, setNodeResults] = useState<NodeExecutionResult[] | null>(null)
+  const [nodeResultsLoading, setNodeResultsLoading] = useState(false)
+
+  function toggleDetails(): void {
+    const opening = !detailsOpen
+    setDetailsOpen(opening)
+    if (opening && nodeResults === null) {
+      setNodeResultsLoading(true)
+      getExecutionNodeResults(turn.id)
+        .then((results) => setNodeResults(results))
+        .catch(() => setNodeResults([]))
+        .finally(() => setNodeResultsLoading(false))
+    }
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex justify-end">
@@ -177,6 +269,52 @@ function ChatTurnView({ turn }: { turn: ChatTurn }) {
       <div className="flex justify-start">
         <ChatTurnResponse turn={turn} />
       </div>
+      <div className="flex items-center gap-2 pl-1 text-[10px] uppercase tracking-wide text-[var(--muted)]">
+        <span className={STATUS_COLORS[turn.status]}>{turn.status}</span>
+        {versionNumber !== undefined ? (
+          <span className="pixel-pill text-[10px]">v{versionNumber}</span>
+        ) : null}
+        <span>{formatTime(turn.execution.started_at)}</span>
+        {turn.execution.finished_at ? (
+          <span>→ {formatTime(turn.execution.finished_at)}</span>
+        ) : null}
+        <button
+          type="button"
+          className="pixel-link underline"
+          onClick={toggleDetails}
+        >
+          {detailsOpen ? 'Hide details' : 'Details'}
+        </button>
+      </div>
+      {detailsOpen ? (
+        <div className="pixel-panel ml-1 flex flex-col gap-2 px-3 py-2 text-xs">
+          {nodeResultsLoading ? (
+            <div className="text-[var(--muted)]">Loading node results…</div>
+          ) : !nodeResults || nodeResults.length === 0 ? (
+            <div className="text-[var(--muted)]">No node results recorded.</div>
+          ) : (
+            nodeResults.map((nodeResult) => (
+              <div key={nodeResult.id} className="border-b border-white/10 pb-2 last:border-0 last:pb-0">
+                <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wide text-[var(--muted)]">
+                  <span>Node #{nodeResult.node_id}</span>
+                  <span className={STATUS_COLORS[nodeResult.status]}>
+                    {nodeResult.status}
+                  </span>
+                </div>
+                {nodeResult.output !== null ? (
+                  <OutputRenderer
+                    value={nodeResult.output}
+                    portType={outputPortByNodeId.get(nodeResult.node_id) ?? null}
+                  />
+                ) : null}
+                {nodeResult.error ? (
+                  <div className="text-[var(--danger)]">{nodeResult.error}</div>
+                ) : null}
+              </div>
+            ))
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -198,6 +198,17 @@ export interface TelegramBotCreatePayload {
   bot_token: string
 }
 
+export interface NodeExecutionResult {
+  id: number
+  execution_id: number
+  node_id: number
+  status: ExecutionStatus
+  output: string | null
+  error: string | null
+  started_at: string
+  finished_at: string | null
+}
+
 export interface ApiError {
   message: string
   status: number
