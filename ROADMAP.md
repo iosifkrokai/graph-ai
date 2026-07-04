@@ -113,9 +113,18 @@ against the actual code as of this writing (not carried forward from stale notes
       threads `sourceHandle` through edge create/load
       (`useGraphState.ts`/`GraphCanvas.tsx`). `NodeFieldVisibility` gained a
       `not_equals` sibling to `equals` for the value field's visibility rule.
-- [ ] Code/Transform, RAG/Vector search, Loop/Map — still deferred, need
-      dedicated engine work (sandboxing, vector DB, re-entrant subgraph
-      execution for Loop/Map).
+- [x] **Code/Transform node**: user-authored Python (`NodeType.CODE_TRANSFORM`,
+      `nodes/code_transform.py`) run against `RestrictedPython`
+      (`compile_restricted` + `safe_globals`/`safe_builtins` +
+      `safer_getattr`/guarded getitem/getiter, plus a small extra-builtins
+      allowlist including `json`) on a worker thread (`asyncio.to_thread`, so
+      an infinite loop can't block the event loop — it does leak the thread,
+      a known/documented limitation). Reads `input`, expects the script to
+      assign `output`; non-string output is JSON-serialized. Syntax/runtime
+      errors and a missing `output` assignment surface as
+      `ExecutionGraphValidationError`.
+- [ ] RAG/Vector search, Loop/Map — still deferred, need dedicated engine
+      work (vector DB, re-entrant subgraph execution for Loop/Map).
 
 ## Phase 4 — UX consolidation ✅ done (first pass), items below still open
 
