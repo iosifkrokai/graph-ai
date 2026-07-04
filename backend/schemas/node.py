@@ -18,6 +18,7 @@ class NodeFieldWidget(StrEnum):
     SELECT = "select"
     PROVIDER = "provider"
     MODEL = "model"
+    TELEGRAM_BOT = "telegram_bot"
 
 
 class NodeFieldDataSourceKind(StrEnum):
@@ -25,6 +26,7 @@ class NodeFieldDataSourceKind(StrEnum):
 
     LLM_PROVIDER = "llm_provider"
     LLM_MODEL = "llm_model"
+    TELEGRAM_BOT = "telegram_bot"
 
 
 class NodeFieldUI(BaseModel):

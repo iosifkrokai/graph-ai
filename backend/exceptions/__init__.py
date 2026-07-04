@@ -26,6 +26,7 @@ from exceptions.node import (
     NodeNotFoundError,
     WebSearchConnectionError,
 )
+from exceptions.telegram import TelegramAPIError, TelegramBotNotFoundError
 from exceptions.user import UserAlreadyExistsError, UserNotFoundError
 from exceptions.workflow import WorkflowNotFoundError, WorkflowVersionNotFoundError
 
@@ -46,6 +47,8 @@ __all__ = [
     "NodeDataValidationError",
     "NodeExecutionTimeoutError",
     "NodeNotFoundError",
+    "TelegramAPIError",
+    "TelegramBotNotFoundError",
     "UnsupportedLLMProviderError",
     "UserAlreadyExistsError",
     "UserNotFoundError",

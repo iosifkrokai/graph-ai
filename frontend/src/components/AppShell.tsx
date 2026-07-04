@@ -3,6 +3,7 @@ import { type ReactNode, useState } from 'react'
 import type { ApiError, Execution } from '../lib/types'
 import { ExecutionHistory } from './ExecutionHistory'
 import { ProviderManager } from './ProviderManager'
+import { TelegramBotManager } from './TelegramBotManager'
 import { UserMenu } from './UserMenu'
 
 export type ViewMode = 'build' | 'chat'
@@ -35,6 +36,7 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const [showProviders, setShowProviders] = useState(false)
+  const [showTelegramBots, setShowTelegramBots] = useState(false)
   const [showExecutions, setShowExecutions] = useState(false)
 
   const mainClassName =
@@ -81,6 +83,13 @@ export function AppShell({
           <button
             type="button"
             className="pixel-button ghost small"
+            onClick={() => setShowTelegramBots(true)}
+          >
+            Telegram Bots
+          </button>
+          <button
+            type="button"
+            className="pixel-button ghost small"
             onClick={() => setShowExecutions(true)}
           >
             Executions
@@ -95,6 +104,12 @@ export function AppShell({
       {showProviders ? (
         <ProviderManager
           onClose={() => setShowProviders(false)}
+          onError={onError}
+        />
+      ) : null}
+      {showTelegramBots ? (
+        <TelegramBotManager
+          onClose={() => setShowTelegramBots(false)}
           onError={onError}
         />
       ) : null}

@@ -7,6 +7,7 @@ from api.routers import (
     health,
     llm_provider,
     node,
+    telegram_bot,
     user,
     workflow,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "health",
     "llm_provider",
     "node",
+    "telegram_bot",
     "user",
     "workflow",
 ]

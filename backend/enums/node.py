@@ -42,9 +42,11 @@ class InputNodeFormat(StrEnum):
     """Supported input node formats."""
 
     TXT = auto()
+    TELEGRAM = auto()
 
 
 class OutputNodeFormat(StrEnum):
     """Supported output node formats."""
 
     TXT = auto()
+    TELEGRAM = auto()

@@ -113,6 +113,7 @@ class ExecutionUsecase:
         user_id: int,
         data: ExecutionCreate,
         enqueue: Callable[[int], Awaitable[None]],
+        telegram_chat_id: int | None = None,
     ) -> ExecutionResponse:
         """Validate a workflow, persist a queued execution, and enqueue it.
 
@@ -125,6 +126,9 @@ class ExecutionUsecase:
             user_id: The owner user ID.
             data: The execution payload.
             enqueue: Callback that schedules the execution for background running.
+            telegram_chat_id: Internal-only. Set by the Telegram poller (never by
+                the public API) so the worker knows which chat to reply to once
+                the run finishes.
 
         Returns:
             The created execution in ``CREATED`` (queued) state.
@@ -165,6 +169,7 @@ class ExecutionUsecase:
                 "version_id": version.id,
                 "input_data": data.input_data.model_dump(),
                 "status": ExecutionStatus.CREATED,
+                "telegram_chat_id": telegram_chat_id,
             },
         )
 

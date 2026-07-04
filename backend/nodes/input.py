@@ -4,6 +4,8 @@ from enums import InputNodeFormat, NodeType, PortType, ValidatorType
 from nodes.base import NodeExecutionContext
 from nodes.definition import NodeDefinition, NodeHandlerDeps
 from schemas import (
+    NodeFieldDataSource,
+    NodeFieldDataSourceKind,
     NodeFieldSpec,
     NodeFieldUI,
     NodeFieldWidget,
@@ -49,9 +51,22 @@ DEFINITION = NodeDefinition(
         NodeFieldSpec(
             name="format",
             required=True,
-            validators={ValidatorType.SELECT.value: [InputNodeFormat.TXT.value]},
+            validators={
+                ValidatorType.SELECT.value: [member.value for member in InputNodeFormat]
+            },
             ui=NodeFieldUI(widget=NodeFieldWidget.SELECT, label="Format"),
             default=InputNodeFormat.TXT.value,
+        ),
+        NodeFieldSpec(
+            name="telegram_bot_id",
+            required=False,
+            validators={ValidatorType.GE.value: 1},
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.TELEGRAM_BOT,
+                label="Telegram Bot",
+                help="Required when Format is Telegram: the bot to poll for messages.",
+            ),
+            datasource=NodeFieldDataSource(kind=NodeFieldDataSourceKind.TELEGRAM_BOT),
         ),
     ),
     build_handler=_build_handler,

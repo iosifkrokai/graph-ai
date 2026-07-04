@@ -37,6 +37,11 @@ from schemas.node import (
     NodeResponse,
     NodeUpdate,
 )
+from schemas.telegram_bot import (
+    TelegramBotCreate,
+    TelegramBotResponse,
+    TelegramBotUpdate,
+)
 from schemas.user import UserCreate, UserResponse
 from schemas.workflow import WorkflowCreate, WorkflowResponse, WorkflowUpdate
 from schemas.workflow_version import WorkflowVersionResponse
@@ -78,6 +83,9 @@ __all__ = [
     "NodeResponse",
     "NodeUpdate",
     "ServiceHealthResponse",
+    "TelegramBotCreate",
+    "TelegramBotResponse",
+    "TelegramBotUpdate",
     "UserCreate",
     "UserResponse",
     "WorkflowCreate",

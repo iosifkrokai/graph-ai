@@ -14,6 +14,7 @@ from api.routers import (
     health,
     llm_provider,
     node,
+    telegram_bot,
     user,
     workflow,
 )
@@ -68,3 +69,4 @@ app.include_router(router=node.router)
 app.include_router(router=edge.router)
 app.include_router(router=execution.router)
 app.include_router(router=llm_provider.router)
+app.include_router(router=telegram_bot.router)

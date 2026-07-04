@@ -4,12 +4,18 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.repositories import LLMProviderRepository, NodeRepository, WorkflowRepository
+from db.repositories import (
+    LLMProviderRepository,
+    NodeRepository,
+    TelegramBotRepository,
+    WorkflowRepository,
+)
 from enums import NodeType, ValidatorType
 from exceptions import (
     LLMProviderNotFoundError,
     NodeDataValidationError,
     NodeNotFoundError,
+    TelegramBotNotFoundError,
     WorkflowNotFoundError,
 )
 from nodes import build_node_catalog
@@ -32,6 +38,7 @@ class NodeUsecase:
         self._node_repository = NodeRepository()
         self._workflow_repository = WorkflowRepository()
         self._llm_provider_repository = LLMProviderRepository()
+        self._telegram_bot_repository = TelegramBotRepository()
         self._node_catalog = build_node_catalog()
 
     def _get_node_spec(self, node_type: NodeType) -> NodeCatalogItem:
@@ -166,12 +173,17 @@ class NodeUsecase:
         Raises:
             NodeDataValidationError: If reference format is invalid.
             LLMProviderNotFoundError: If a referenced provider is not owned by user.
+            TelegramBotNotFoundError: If a referenced bot is not owned by the user.
 
         """
         spec = self._get_node_spec(node_type=node_type)
 
         for field in spec.fields:
-            if field.datasource is None or field.name not in data:
+            if (
+                field.datasource is None
+                or field.name not in data
+                or data[field.name] is None
+            ):
                 continue
 
             if field.datasource.kind is NodeFieldDataSourceKind.LLM_PROVIDER:
@@ -191,6 +203,23 @@ class NodeUsecase:
                 )
                 if not provider:
                     raise LLMProviderNotFoundError
+
+            if field.datasource.kind is NodeFieldDataSourceKind.TELEGRAM_BOT:
+                bot_id = data[field.name]
+                if not isinstance(bot_id, int) or bot_id <= 0:
+                    raise NodeDataValidationError(
+                        message=(
+                            f"Field '{field.name}' must be a positive integer bot ID."
+                        )
+                    )
+
+                bot = await self._telegram_bot_repository.get_by(
+                    session=session,
+                    id=bot_id,
+                    user_id=user_id,
+                )
+                if not bot:
+                    raise TelegramBotNotFoundError
 
     async def create_node(
         self,

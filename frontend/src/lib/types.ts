@@ -117,8 +117,9 @@ export type NodeFieldWidget =
   | 'select'
   | 'provider'
   | 'model'
+  | 'telegram_bot'
 
-export type NodeFieldDataSourceKind = 'llm_provider' | 'llm_model'
+export type NodeFieldDataSourceKind = 'llm_provider' | 'llm_model' | 'telegram_bot'
 
 export type PortType = 'text' | 'json' | 'file' | 'list'
 
@@ -177,6 +178,18 @@ export interface LlmProviderCreatePayload {
 
 export interface LlmModel {
   name: string
+}
+
+export interface TelegramBot {
+  id: number
+  user_id: number
+  name: string
+  enabled: boolean
+}
+
+export interface TelegramBotCreatePayload {
+  name: string
+  bot_token: string
 }
 
 export interface ApiError {

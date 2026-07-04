@@ -12,6 +12,8 @@ import type {
   NodeResponse,
   NodeUpdatePayload,
   RunInputPayload,
+  TelegramBot,
+  TelegramBotCreatePayload,
   TokenResponse,
   UserProfile,
   Workflow,
@@ -253,4 +255,21 @@ export async function getLlmProviderModels(
   providerId: number,
 ): Promise<LlmModel[]> {
   return request<LlmModel[]>(`/llm-providers/${providerId}/models`)
+}
+
+export async function getTelegramBots(): Promise<TelegramBot[]> {
+  return request<TelegramBot[]>('/telegram-bots')
+}
+
+export async function createTelegramBot(
+  payload: TelegramBotCreatePayload,
+): Promise<TelegramBot> {
+  return request<TelegramBot>('/telegram-bots', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteTelegramBot(botId: number): Promise<void> {
+  await request(`/telegram-bots/${botId}`, { method: 'DELETE' })
 }

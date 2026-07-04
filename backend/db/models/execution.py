@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Enum, ForeignKey, Text, func
+from sqlalchemy import BigInteger, Enum, ForeignKey, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,6 +40,10 @@ class Execution(BaseWithID):
         JSONB, comment="Output data from execution"
     )
     error: Mapped[str | None] = mapped_column(Text, comment="Error message if failed")
+    telegram_chat_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        comment="Telegram chat to reply to, if this run was triggered by a message",
+    )
 
     started_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),

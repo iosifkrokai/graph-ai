@@ -6,6 +6,7 @@ from usecases.execution import ExecutionUsecase
 from usecases.health import HealthUsecase
 from usecases.llm_provider import LLMProviderUsecase
 from usecases.node import NodeUsecase
+from usecases.telegram_bot import TelegramBotUsecase
 from usecases.user import UserUsecase
 from usecases.workflow import WorkflowUsecase
 
@@ -16,6 +17,7 @@ __all__ = [
     "HealthUsecase",
     "LLMProviderUsecase",
     "NodeUsecase",
+    "TelegramBotUsecase",
     "UserUsecase",
     "WorkflowUsecase",
 ]

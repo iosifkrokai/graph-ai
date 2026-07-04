@@ -1,0 +1,282 @@
+"""Worker Telegram polling and reply tests."""
+
+from typing import Any, ClassVar
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+
+import worker as worker_module
+from db.repositories import ExecutionRepository, TelegramBotRepository
+from enums import ExecutionStatus, NodeType
+from schemas import ExecutionCreate, ExecutionInputPayload
+from tests.factories import (
+    EdgeFactory,
+    NodeFactory,
+    TelegramBotFactory,
+    UserFactory,
+    WorkflowFactory,
+)
+from tests.test_api.base import BaseTestCase
+from usecases import ExecutionUsecase
+
+_FAKE_CHAT_ID = 999
+_FAKE_UPDATE_ID = 501
+
+
+class _FakeRedis:
+    """Stand-in ARQ redis connection recording enqueue calls."""
+
+    def __init__(self) -> None:
+        """Initialize the call log."""
+        self.enqueued: list[int] = []
+
+    async def enqueue_job(
+        self, _name: str, execution_id: int, **kwargs: object
+    ) -> None:
+        """Record the enqueued execution ID."""
+        del kwargs
+        self.enqueued.append(execution_id)
+
+
+class _FakeSendMessage:
+    """Stand-in for ``integrations.telegram.send_message`` recording calls."""
+
+    calls: ClassVar[list[tuple[str, int, str]]] = []
+
+    async def __call__(self, bot_token: str, chat_id: int, text: str) -> None:
+        """Record the call instead of hitting Telegram."""
+        _FakeSendMessage.calls.append((bot_token, chat_id, text))
+
+
+async def _fake_get_updates(
+    bot_token: str, offset: int, **kwargs: object
+) -> list[dict[str, Any]]:
+    """Return one fixed Telegram update regardless of arguments."""
+    del bot_token, offset, kwargs
+    return [
+        {
+            "update_id": _FAKE_UPDATE_ID,
+            "message": {
+                "text": "hello from telegram",
+                "chat": {"id": _FAKE_CHAT_ID},
+            },
+        }
+    ]
+
+
+class TestPollTelegramUpdates(BaseTestCase):
+    """Tests for ``worker.poll_telegram_updates``."""
+
+    @pytest.mark.asyncio
+    async def test_creates_execution_and_advances_offset(
+        self, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A new Telegram message enqueues an execution and advances the offset."""
+        worker_sessionmaker = async_sessionmaker(
+            bind=test_engine, expire_on_commit=False
+        )
+        monkeypatch.setattr(worker_module, "async_session", worker_sessionmaker)
+        monkeypatch.setattr(worker_module, "get_updates", _fake_get_updates)
+
+        user = await UserFactory.create_async(session=self.session)
+        bot = await TelegramBotFactory.create_async(
+            session=self.session, user_id=user.id
+        )
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user.id
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "telegram", "telegram_bot_id": bot.id},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+
+        workflow_id = workflow.id
+        bot_id = bot.id
+
+        await worker_module.poll_telegram_updates({"redis": _FakeRedis()})
+
+        self.session.expire_all()
+        executions = await ExecutionRepository().get_all(
+            session=self.session, workflow_id=workflow_id
+        )
+        if len(executions) != 1:
+            pytest.fail(f"Expected exactly one execution, got {len(executions)}")
+        execution = executions[0]
+        if execution.telegram_chat_id != _FAKE_CHAT_ID:
+            pytest.fail("Execution was not tagged with the triggering chat ID")
+        if execution.input_data != {"value": "hello from telegram"}:
+            pytest.fail("Execution input did not carry the Telegram message text")
+
+        refreshed_bot = await TelegramBotRepository().get_by(
+            session=self.session, id=bot_id
+        )
+        if refreshed_bot is None or refreshed_bot.last_update_id != _FAKE_UPDATE_ID:
+            pytest.fail("Bot poll offset was not advanced")
+
+    @pytest.mark.asyncio
+    async def test_ignores_nodes_not_wired_to_this_bot(
+        self, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bot with no referencing Input node is never polled."""
+        worker_sessionmaker = async_sessionmaker(
+            bind=test_engine, expire_on_commit=False
+        )
+        monkeypatch.setattr(worker_module, "async_session", worker_sessionmaker)
+
+        async def _fail_if_called(*args: object, **kwargs: object) -> list[Any]:
+            """Fail the test if the poller reaches out to Telegram at all."""
+            del args, kwargs
+            pytest.fail("get_updates should not be called for an unreferenced bot")
+
+        monkeypatch.setattr(worker_module, "get_updates", _fail_if_called)
+
+        user = await UserFactory.create_async(session=self.session)
+        await TelegramBotFactory.create_async(session=self.session, user_id=user.id)
+
+        await worker_module.poll_telegram_updates({"redis": _FakeRedis()})
+
+
+class TestTelegramReply(BaseTestCase):
+    """Tests for the worker replying to Telegram after an execution finishes."""
+
+    @pytest.mark.asyncio
+    async def test_sends_reply_when_output_configured_for_telegram(
+        self, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Telegram-triggered execution replies through the Output node's bot."""
+        worker_sessionmaker = async_sessionmaker(
+            bind=test_engine, expire_on_commit=False
+        )
+        monkeypatch.setattr(worker_module, "async_session", worker_sessionmaker)
+        fake_send_message = _FakeSendMessage()
+        _FakeSendMessage.calls = []
+        monkeypatch.setattr(worker_module, "send_message", fake_send_message)
+
+        user = await UserFactory.create_async(session=self.session)
+        bot = await TelegramBotFactory.create_async(
+            session=self.session, user_id=user.id
+        )
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user.id
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "telegram", "telegram_bot_id": bot.id},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+
+        async def _noop_enqueue(_execution_id: int) -> None:
+            """Skip the real ARQ enqueue; the test runs the job inline."""
+
+        execution = await ExecutionUsecase().create_execution(
+            session=self.session,
+            user_id=user.id,
+            data=ExecutionCreate(
+                workflow_id=workflow.id,
+                input_data=ExecutionInputPayload(value="hello"),
+            ),
+            enqueue=_noop_enqueue,
+            telegram_chat_id=_FAKE_CHAT_ID,
+        )
+
+        await worker_module.run_execution_task({"redis": _FakeRedis()}, execution.id)
+
+        self.session.expire_all()
+        finalized = await ExecutionRepository().get_by(
+            session=self.session, id=execution.id
+        )
+        if finalized is None or finalized.status != ExecutionStatus.SUCCESS:
+            pytest.fail("Execution should have completed successfully")
+
+        if len(fake_send_message.calls) != 1:
+            pytest.fail(
+                f"Expected exactly one Telegram reply, got "
+                f"{len(fake_send_message.calls)}"
+            )
+        _, chat_id, text = fake_send_message.calls[0]
+        if chat_id != _FAKE_CHAT_ID:
+            pytest.fail("Reply was sent to the wrong chat")
+        if text != "hello":
+            pytest.fail("Reply did not carry the execution output")
+
+    @pytest.mark.asyncio
+    async def test_no_reply_when_output_not_configured_for_telegram(
+        self, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No reply is sent when the Output node's format isn't Telegram."""
+        worker_sessionmaker = async_sessionmaker(
+            bind=test_engine, expire_on_commit=False
+        )
+        monkeypatch.setattr(worker_module, "async_session", worker_sessionmaker)
+        fake_send_message = _FakeSendMessage()
+        _FakeSendMessage.calls = []
+        monkeypatch.setattr(worker_module, "send_message", fake_send_message)
+
+        user = await UserFactory.create_async(session=self.session)
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user.id
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+
+        async def _noop_enqueue(_execution_id: int) -> None:
+            """Skip the real ARQ enqueue; the test runs the job inline."""
+
+        execution = await ExecutionUsecase().create_execution(
+            session=self.session,
+            user_id=user.id,
+            data=ExecutionCreate(
+                workflow_id=workflow.id,
+                input_data=ExecutionInputPayload(value="hello"),
+            ),
+            enqueue=_noop_enqueue,
+            telegram_chat_id=_FAKE_CHAT_ID,
+        )
+
+        await worker_module.run_execution_task({"redis": _FakeRedis()}, execution.id)
+
+        if fake_send_message.calls:
+            pytest.fail("No Telegram reply should be sent without format=telegram")

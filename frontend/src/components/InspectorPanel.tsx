@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Node as FlowNode } from 'reactflow'
 
-import { getLlmProviderModels, getLlmProviders } from '../lib/api'
+import { getLlmProviderModels, getLlmProviders, getTelegramBots } from '../lib/api'
 import type {
   LlmModel,
   LlmProvider,
   NodeCatalogItem,
   NodeCatalogField,
   NodeType,
+  TelegramBot,
 } from '../lib/types'
 import { validateFields } from '../lib/validation'
 import { NumberInput } from './NumberInput'
@@ -147,6 +148,31 @@ function ProviderField({
   )
 }
 
+function TelegramBotField({
+  bots,
+  value,
+  onChange,
+}: {
+  bots: TelegramBot[]
+  value: unknown
+  onChange: (value: number) => void
+}) {
+  return (
+    <select
+      className="pixel-input"
+      value={String(value ?? '')}
+      onChange={(event) => onChange(Number(event.target.value))}
+    >
+      <option value="">-- select bot --</option>
+      {bots.map((bot) => (
+        <option key={bot.id} value={bot.id}>
+          {bot.name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 function ModelField({
   models,
   value,
@@ -207,6 +233,7 @@ export function InspectorPanel({
   const nodeType = (node?.data?.nodeType as NodeType | undefined) ?? null
   const [providers, setProviders] = useState<LlmProvider[]>([])
   const [models, setModels] = useState<LlmModel[]>([])
+  const [telegramBots, setTelegramBots] = useState<TelegramBot[]>([])
   const [draftData, setDraftData] = useState<Record<string, unknown>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>(
     'idle',
@@ -233,6 +260,9 @@ export function InspectorPanel({
   )
   const hasModelDatasource = fields.some(
     (field) => field.datasource?.kind === 'llm_model',
+  )
+  const hasTelegramBotDatasource = fields.some(
+    (field) => field.datasource?.kind === 'telegram_bot',
   )
 
   const selectedProviderId = Number(draftData['llm_provider_id'] ?? 0)
@@ -388,6 +418,33 @@ export function InspectorPanel({
     return () => { cancelled = true }
   }, [hasModelDatasource, selectedProviderId])
 
+  useEffect(() => {
+    let cancelled = false
+
+    if (!hasTelegramBotDatasource) {
+      void Promise.resolve().then(() => {
+        if (!cancelled) {
+          setTelegramBots([])
+        }
+      })
+      return () => { cancelled = true }
+    }
+
+    void getTelegramBots()
+      .then((data) => {
+        if (!cancelled) {
+          setTelegramBots(data)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTelegramBots([])
+        }
+      })
+
+    return () => { cancelled = true }
+  }, [hasTelegramBotDatasource])
+
   function updateField(key: string, value: string | number | null) {
     setDraftData((current) => ({ ...current, [key]: value }))
   }
@@ -414,6 +471,16 @@ export function InspectorPanel({
           models={models}
           value={value}
           onChange={(model) => updateField(field.name, model)}
+        />
+      )
+    }
+
+    if (field.ui.widget === 'telegram_bot') {
+      return (
+        <TelegramBotField
+          bots={telegramBots}
+          value={value}
+          onChange={(botId) => updateField(field.name, botId)}
         />
       )
     }
