@@ -80,7 +80,7 @@ against the actual code as of this writing (not carried forward from stale notes
 - [x] Token streaming provider → worker (Redis pub/sub) → SSE → frontend
       (`useExecutions.liveTokens`).
 
-## Phase 3 — Richer graph & node types ✅ done (core), 🟡 extension in progress
+## Phase 3 — Richer graph & node types ✅ done
 
 - [x] Typed ports (`PortType` = text/json/file/list) with edge-level compatibility
       checks (`ports_compatible`, currently exact-match only — the intended
@@ -123,8 +123,18 @@ against the actual code as of this writing (not carried forward from stale notes
       assign `output`; non-string output is JSON-serialized. Syntax/runtime
       errors and a missing `output` assignment surface as
       `ExecutionGraphValidationError`.
-- [ ] RAG/Vector search, Loop/Map — still deferred, need dedicated engine
-      work (vector DB, re-entrant subgraph execution for Loop/Map).
+- [x] **RAG / Vector search**: two node types, `Vector Ingest`
+      (`nodes/vector_ingest.py`) and `Vector Search` (`nodes/vector_search.py`),
+      backed by a new Qdrant service (`docker-compose.yml`) and local CPU
+      embeddings via `fastembed` (`rag/embeddings.py`, no LLM provider needed).
+      Ingest chunks the upstream text (fixed 800/100 char size/overlap,
+      `rag/qdrant.py`), embeds, and upserts into a named collection
+      (auto-created); Search embeds the upstream text as a query and returns
+      the top-k matching chunks joined for downstream nodes (e.g. an LLM
+      prompt). Collection names are free text, shared globally, no dedup on
+      re-ingest — deliberately minimal for v1. **Known gap:** no way to feed
+      a document in except pasting its text through an Input node (or
+      fetching it via HTTP Request) — no file upload — tracked in Phase 6.
 
 ## Phase 4 — UX consolidation ✅ done (first pass), items below still open
 
@@ -241,6 +251,12 @@ Still open:
 - [ ] **Template node: single exact-match `{{input}}`** — `{{ input }}` or
       `{{INPUT}}` silently drops the entire upstream text with no error, and
       there's no way to reference an individual parent by index.
+- [ ] **Vector Ingest has no real document intake** — the only way to feed a
+      document in today is pasting its full text through an Input node (or
+      fetching it via HTTP Request); there's no file upload (PDF/docx/etc.),
+      no way to browse/delete what's already in a Qdrant collection from the
+      UI, and no dedup on re-ingest (re-running the same document appends
+      duplicate chunks).
 
 ## Phase 7 — Product breadth (parallel track)
 
