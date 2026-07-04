@@ -1,10 +1,11 @@
 import { useCallback, useMemo, useState } from 'react'
 
-import { AppShell, type ViewMode } from './components/AppShell'
+import { AppShell } from './components/AppShell'
 import { AuthScreen } from './components/AuthScreen'
 import { ChatPanel } from './components/ChatPanel'
 import { CreateNodeDialog } from './components/CreateNodeDialog'
 import { GraphCanvas } from './components/GraphCanvas'
+import { HistoryOverlay } from './components/HistoryOverlay'
 import { InspectorPanel } from './components/InspectorPanel'
 import { WorkflowSidebar } from './components/WorkflowSidebar'
 import { useAuthSession } from './hooks/useAuthSession'
@@ -25,7 +26,7 @@ interface NodeCreateDraft {
 export function App() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState<boolean>(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('build')
+  const [showHistory, setShowHistory] = useState<boolean>(false)
   const [nodeCreateDraft, setNodeCreateDraft] = useState<NodeCreateDraft | null>(null)
 
   const {
@@ -230,58 +231,59 @@ export function App() {
         workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
         executionStatus={lastExecution?.status ?? null}
         error={error}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
+        onOpenHistory={() => setShowHistory(true)}
         onLogout={handleLogout}
         onDeleteAccount={handleDeleteAccount}
         onError={handleError}
       >
-        {viewMode === 'build' ? (
-          <>
-            <WorkflowSidebar
-              workflows={workflows}
-              activeWorkflowId={activeWorkflowId}
-              nodeCatalog={nodeCatalog}
-              onSelectWorkflow={setActiveWorkflowId}
-              onCreateWorkflow={handleCreateWorkflow}
-              onRenameWorkflow={handleRenameWorkflow}
-              onDeleteWorkflow={handleDeleteWorkflow}
-              onAddNode={handleAddNode}
-            />
-            <GraphCanvas
-              nodes={nodes}
-              edges={edges}
-              nodeCatalog={nodeCatalog}
-              onSelectNode={setSelectedNodeId}
-              onNodesChange={handleNodesChange}
-              onMoveNode={handleMoveNode}
-              onConnect={handleConnect}
-              onDeleteEdge={handleDeleteEdge}
-              onDropNode={handleDropNode}
-              onDeleteNode={handleDeleteNode}
-            />
-            <InspectorPanel
-              node={selectedNode}
-              nodeCatalog={nodeCatalog}
-              onSaveNode={handleUpdateNodeData}
-            />
-          </>
-        ) : (
-          <ChatPanel
-            workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
-            hasWorkflow={activeWorkflowId !== null}
-            activeWorkflowId={activeWorkflowId}
-            executions={executions}
-            liveTokens={liveTokens}
-            lastExecution={lastExecution}
-            runEnabled={runEnabled}
-            runDisabledReason={runDisabledReason}
-            loading={loading}
-            nodeMetaByNodeId={nodeMetaByNodeId}
-            onRun={handleRun}
-          />
-        )}
+        <WorkflowSidebar
+          workflows={workflows}
+          activeWorkflowId={activeWorkflowId}
+          nodeCatalog={nodeCatalog}
+          onSelectWorkflow={setActiveWorkflowId}
+          onCreateWorkflow={handleCreateWorkflow}
+          onRenameWorkflow={handleRenameWorkflow}
+          onDeleteWorkflow={handleDeleteWorkflow}
+          onAddNode={handleAddNode}
+        />
+        <GraphCanvas
+          nodes={nodes}
+          edges={edges}
+          nodeCatalog={nodeCatalog}
+          onSelectNode={setSelectedNodeId}
+          onNodesChange={handleNodesChange}
+          onMoveNode={handleMoveNode}
+          onConnect={handleConnect}
+          onDeleteEdge={handleDeleteEdge}
+          onDropNode={handleDropNode}
+          onDeleteNode={handleDeleteNode}
+        />
+        <InspectorPanel
+          node={selectedNode}
+          nodeCatalog={nodeCatalog}
+          onSaveNode={handleUpdateNodeData}
+        />
       </AppShell>
+
+      {showHistory ? (
+        <HistoryOverlay onClose={() => setShowHistory(false)}>
+          <div className="mx-auto flex h-full w-full max-w-3xl flex-col px-4 pt-4 pb-4">
+            <ChatPanel
+              workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
+              hasWorkflow={activeWorkflowId !== null}
+              activeWorkflowId={activeWorkflowId}
+              executions={executions}
+              liveTokens={liveTokens}
+              lastExecution={lastExecution}
+              runEnabled={runEnabled}
+              runDisabledReason={runDisabledReason}
+              loading={loading}
+              nodeMetaByNodeId={nodeMetaByNodeId}
+              onRun={handleRun}
+            />
+          </div>
+        </HistoryOverlay>
+      ) : null}
 
       <CreateNodeDialog
         key={
