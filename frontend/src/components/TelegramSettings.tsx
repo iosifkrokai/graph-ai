@@ -10,6 +10,7 @@ interface TelegramSettingsProps {
 export function TelegramSettings({ onError }: TelegramSettingsProps) {
   const [name, setName] = useState('')
   const [botToken, setBotToken] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
   const { bots, creating, createBot, removeBot } = useTelegramBots({ onError })
 
@@ -30,6 +31,7 @@ export function TelegramSettings({ onError }: TelegramSettingsProps) {
 
   async function handleDelete(botId: number): Promise<void> {
     await removeBot(botId)
+    setConfirmDeleteId(null)
   }
 
   return (
@@ -48,13 +50,34 @@ export function TelegramSettings({ onError }: TelegramSettingsProps) {
                 {bot.enabled ? 'enabled' : 'disabled'}
               </div>
             </div>
-            <button
-              type="button"
-              className="pixel-icon danger"
-              onClick={() => void handleDelete(bot.id)}
-            >
-              Del
-            </button>
+            {confirmDeleteId === bot.id ? (
+              <>
+                <button
+                  type="button"
+                  className="pixel-icon danger"
+                  title="Confirm delete"
+                  onClick={() => void handleDelete(bot.id)}
+                >
+                  ✓
+                </button>
+                <button
+                  type="button"
+                  className="pixel-icon"
+                  title="Cancel"
+                  onClick={() => setConfirmDeleteId(null)}
+                >
+                  ✕
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="pixel-icon danger"
+                onClick={() => setConfirmDeleteId(bot.id)}
+              >
+                Del
+              </button>
+            )}
           </div>
         ))}
       </div>

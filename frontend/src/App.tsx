@@ -232,6 +232,7 @@ export function App() {
         executionStatus={lastExecution?.status ?? null}
         error={error}
         onOpenHistory={() => setShowHistory(true)}
+        onDismissError={() => setError(null)}
         onLogout={handleLogout}
         onDeleteAccount={handleDeleteAccount}
         onError={handleError}
@@ -250,6 +251,7 @@ export function App() {
           nodes={nodes}
           edges={edges}
           nodeCatalog={nodeCatalog}
+          runDisabledReason={activeWorkflowId ? runDisabledReason : null}
           onSelectNode={setSelectedNodeId}
           onNodesChange={handleNodesChange}
           onMoveNode={handleMoveNode}

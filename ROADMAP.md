@@ -35,18 +35,11 @@ against the actual code as of this writing (not carried forward from stale notes
 3. **Multi-step operations aren't atomic** — a crash between two commits (e.g.
    register's user+provider, or execution create-then-enqueue) leaves orphaned state
    that nothing reaps.
-4. **Two independent field-rendering implementations on the frontend**
-   (`InspectorPanel.tsx` and `CreateNodeDialog.tsx` each hand-roll the same
-   `TextField`/`NumberField`/`ProviderField`/... set) — a new widget needs updating
-   in two places, exactly the trap the `visible_when` mechanism was built to avoid
-   for field *visibility*, but not yet solved for field *rendering*.
-5. **No global node-output size cap**, and per-attempt LLM streaming duplicates
+4. **No global node-output size cap**, and per-attempt LLM streaming duplicates
    tokens to the client on retry.
-6. **Destructive actions are inconsistently confirmed** — workflow delete and account
-   delete confirm inline; node/edge/provider/bot delete do not.
-7. **No frontend tests**, no undo/redo/multi-select, no React Query — all data
+5. **No frontend tests**, no undo/redo/multi-select, no React Query — all data
    fetching is hand-rolled `useState`/`useEffect`.
-8. **Timezone-less datetime columns**, missing unique constraints on `edges`/
+6. **Timezone-less datetime columns**, missing unique constraints on `edges`/
    `llm_providers`, and pinned reruns can't record per-node results for nodes that
    were since deleted.
 
@@ -136,9 +129,9 @@ against the actual code as of this writing (not carried forward from stale notes
       a document in except pasting its text through an Input node (or
       fetching it via HTTP Request) — no file upload — tracked in Phase 6.
 
-## Phase 4 — UX consolidation ✅ done (first pass), items below still open
+## Phase 4 — UX consolidation ✅ done
 
-Done this pass:
+First pass:
 - [x] Merged the standalone Executions history modal into Chat mode — one place
       to browse + interact with runs, with per-turn version/timestamp/duration and
       a per-node result breakdown (`ChatPanel.tsx`, `OutputRenderer.tsx`).
@@ -149,42 +142,71 @@ Done this pass:
 - [x] Forward-compatible output rendering: `OutputRenderer` dispatches on
       `PortType`, degrading gracefully to plain text for `file`/`list` until a
       real node type produces them.
+- [x] **Unified `InspectorPanel.tsx`/`CreateNodeDialog.tsx` field rendering**
+      into one shared `NodeFieldsForm.tsx`: the widget set
+      (`TextField`/`NumberField`/`SelectField`/`ProviderField`/`ModelField`/
+      `TelegramBotField`/...), the visibility filter, and the `updateField`
+      clear-on-hide logic now live in one place. `NodeFieldsForm` also owns
+      the `useLlmProviders`/`useProviderModels`/`useTelegramBots` hook calls,
+      so `InspectorPanel`'s three hand-rolled `useEffect` fetches (manual
+      `cancelled` flags) are gone — both surfaces get the same data-fetching
+      path `CreateNodeDialog` already used correctly. Generalized the old
+      provider-branch special case (`updateField('model', '')` called
+      manually alongside the provider change) into a `datasource.depends_on`
+      clear rule, so any field whose data source depends on the one just
+      changed resets automatically. Each caller still owns its own
+      persistence/error timing (`InspectorPanel` autosaves and shows errors
+      live; `CreateNodeDialog` validates on submit) — only rendering was
+      unified, not that behavior.
 
-Still open:
-- [ ] **Unify `InspectorPanel.tsx` and `CreateNodeDialog.tsx` field rendering.**
-      Both independently define the same `TextField`/`NumberField`/`SelectField`/
-      `ProviderField`/`ModelField`/`TelegramBotField` set and the same
-      `updateField` clear-on-hide logic. Extract one shared field-renderer
-      component/hook so a new widget type is added once, not twice.
-- [ ] **`InspectorPanel` should use the existing `useLlmProviders`/
-      `useProviderModels`/`useTelegramBots` hooks** instead of its own three
-      hand-rolled `useEffect` fetches with manual `cancelled` flags —
-      `CreateNodeDialog` already does this correctly; make `InspectorPanel` match.
-- [ ] **Migrate `CreateNodeDialog` onto the shared `Modal`** (Escape + click-outside
-      + eventual focus-trap) — it's still a standalone `fixed inset-0` div, so
-      Escape/click-outside behave inconsistently between it and `SettingsModal`.
-- [ ] Add `role="dialog"`, `aria-modal`, and a focus trap to `Modal.tsx`.
-- [ ] Confirm destructive single-click deletes: node, edge, LLM provider, Telegram
-      bot (workflow and account delete already confirm inline — reuse that pattern).
-- [ ] De-duplicate `ACTIVE_STATUSES` (`useExecutions.ts` and `ChatPanel.tsx` each
-      declare it separately).
-- [ ] Chat's live view still concatenates *every* node's streamed tokens into one
-      blob (`joinLiveTokens`) instead of streaming only the Output node's tokens;
-      auto-scroll fires on every token with no near-bottom check, so it can yank
-      the viewport during a long stream.
-- [ ] Surface run-validity (`runDisabledReason`) in Build mode too, not just Chat —
-      right now you only learn a graph can't run by switching tabs.
-- [ ] Normalize network-level fetch failures (not just HTTP error responses) to
-      `ApiError` in `lib/api.ts`'s `request()` — a dropped connection currently
-      throws a raw `TypeError` that error handlers don't expect.
-- [ ] Dismissible/auto-expiring error banner (today: one global, permanent,
-      non-dismissible banner for any error).
-- [ ] Clearing a required number field silently saves as `0` (`Number('') === 0`)
-      and passes validation — `NumberInput`/`validateFields` should treat an empty
-      required numeric field as invalid, not `0`.
-- [ ] Warn (or block) when a node references a since-deleted LLM provider/model —
-      today the dropdown just shows a blank placeholder while the dead id is
-      silently retained in the node's saved config.
+Second pass (closed out everything remaining):
+- [x] **Migrated `CreateNodeDialog` onto the shared `Modal`** — it was a
+      standalone `fixed inset-0` div with no Escape/click-outside handling;
+      now wrapped in `Modal.tsx` so it behaves consistently with
+      `SettingsModal` (Escape or click-outside calls `onCancel`).
+- [x] Added `role="dialog"`, `aria-modal`, and a Tab/Shift+Tab focus trap to
+      `Modal.tsx`, plus focus-on-open (first focusable element, or the panel
+      itself) and focus-restore-on-close.
+- [x] Confirmed destructive single-click deletes: node/edge delete
+      (`NodeContextMenu.tsx`'s "Delete" now becomes an inline "Confirm
+      delete"/"Cancel" pair), LLM provider and Telegram bot delete
+      (`ProviderSettings.tsx`/`TelegramSettings.tsx`, same `confirmDeleteId`
+      inline ✓/✕ pattern already used for workflow delete in
+      `WorkflowSidebar.tsx`).
+- [x] De-duplicated `ACTIVE_STATUSES` — now a single exported const in
+      `lib/types.ts`, imported by `useExecutions.ts` and `ChatPanel.tsx`
+      instead of each declaring its own copy.
+- [x] Chat's live view now shows only the Output node's streamed tokens
+      (`findOutputNodeId`/`liveOutputText` in `ChatPanel.tsx`, resolved from
+      `nodeMetaByNodeId`) instead of concatenating every node's tokens into
+      one blob; auto-scroll now only fires when the scroll container is
+      already within 120px of the bottom, so it no longer yanks the viewport
+      away from history the user scrolled up to read.
+- [x] Surfaced run-validity (`runDisabledReason`) in Build mode too — a small
+      "Can't run: ..." pill floats over the canvas (`GraphCanvas.tsx`) once a
+      workflow is selected, instead of only learning about it after switching
+      to History/Chat.
+- [x] Normalized network-level fetch failures to `ApiError` in `lib/api.ts`'s
+      `request()` — the `fetch()` call is now wrapped in a try/catch that
+      turns a raw `TypeError` (dropped connection, DNS, CORS, offline) into
+      the same `{ message, status }` shape as an HTTP error response
+      (`status: 0` for "no response received"), so error handlers only ever
+      see one shape.
+- [x] Dismissible/auto-expiring error banner (`AppShell.tsx`) — a ✕ button
+      clears it immediately (`onDismissError`), and it now also auto-clears
+      after 8s if left untouched, instead of staying up permanently.
+- [x] Fixed clearing a required number field silently saving as `0` —
+      `NumberField` (`NodeFieldsForm.tsx`) now keeps an explicitly cleared
+      field as `''` instead of coercing it via `Number('') === 0`, so the
+      existing `requiredError` check in `validateFields` (which already
+      special-cased non-number values) correctly flags it instead of
+      silently accepting zero.
+- [x] Warn when a node references a since-deleted LLM provider/model (or
+      Telegram bot) — `NodeFieldsForm.tsx`'s `referenceWarning` checks a
+      saved id/name against the loaded provider/model/bot list once fetching
+      has settled (`useProviderModels` gained a `loading` flag to make this
+      race-free) and shows "no longer exists"/"no longer available" instead
+      of just a blank dropdown with the dead id silently retained.
 
 ## Phase 5 — Security & data hardening (none of this started)
 

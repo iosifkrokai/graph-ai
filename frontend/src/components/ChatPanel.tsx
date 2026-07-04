@@ -9,6 +9,7 @@ import type {
   PortType,
   RunInputPayload,
 } from '../lib/types'
+import { ACTIVE_STATUSES } from '../lib/types'
 import { OutputRenderer } from './OutputRenderer'
 
 export interface NodeMeta {
@@ -16,9 +17,6 @@ export interface NodeMeta {
   label: string
   portType: PortType | null
 }
-
-// Executions in these states are still being processed by the worker.
-const ACTIVE_STATUSES: ExecutionStatus[] = ['created', 'running']
 
 const STATUS_COLORS: Record<ExecutionStatus, string> = {
   created: 'text-[var(--muted)]',
@@ -80,12 +78,29 @@ function formatDuration(startedAt: string, finishedAt: string | null): string | 
   return `${(ms / 1000).toFixed(1)}s`
 }
 
-function joinLiveTokens(liveTokens: LiveTokens): string {
-  return Object.entries(liveTokens)
-    .sort(([first], [second]) => Number(first) - Number(second))
-    .map(([, value]) => value)
-    .join('\n\n')
+// The Output node is the only one whose stream is user-facing; the other
+// nodes' tokens are intermediate work product and would otherwise show up
+// concatenated into one garbled blob.
+function findOutputNodeId(nodeMetaByNodeId: Map<number, NodeMeta>): number | null {
+  for (const [nodeId, meta] of nodeMetaByNodeId) {
+    if (meta.type === 'output') {
+      return nodeId
+    }
+  }
+  return null
 }
+
+function liveOutputText(liveTokens: LiveTokens, outputNodeId: number | null): string {
+  if (outputNodeId === null) {
+    return ''
+  }
+  return liveTokens[outputNodeId] ?? ''
+}
+
+// Distance (px) from the bottom of the scroll container within which new
+// output still auto-scrolls into view; further away, the user is presumed
+// to be reading earlier history and shouldn't get yanked back down.
+const NEAR_BOTTOM_THRESHOLD_PX = 120
 
 function buildTurns(
   executions: Execution[],
@@ -126,6 +141,7 @@ export function ChatPanel({
   const [draft, setDraft] = useState('')
   const [versionNumbers, setVersionNumbers] = useState<Record<number, number>>({})
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const activeExecutionId = useMemo(
     () =>
@@ -135,7 +151,11 @@ export function ChatPanel({
     [lastExecution],
   )
   const isRunning = activeExecutionId !== null
-  const liveText = joinLiveTokens(liveTokens)
+  const outputNodeId = useMemo(
+    () => findOutputNodeId(nodeMetaByNodeId),
+    [nodeMetaByNodeId],
+  )
+  const liveText = liveOutputText(liveTokens, outputNodeId)
 
   const turns = useMemo(
     () => buildTurns(executions, activeExecutionId, liveText),
@@ -167,7 +187,15 @@ export function ChatPanel({
   }, [activeWorkflowId])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const container = scrollContainerRef.current
+    if (!container) {
+      return
+    }
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight
+    if (distanceFromBottom <= NEAR_BOTTOM_THRESHOLD_PX) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [turns])
 
   const canSend = runEnabled && !isRunning && !loading && draft.trim().length > 0
@@ -203,7 +231,7 @@ export function ChatPanel({
         ) : null}
       </div>
 
-      <div className="pixel-scroll flex-1 overflow-y-auto pr-1">
+      <div ref={scrollContainerRef} className="pixel-scroll flex-1 overflow-y-auto pr-1">
         {turns.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">
             {hasWorkflow

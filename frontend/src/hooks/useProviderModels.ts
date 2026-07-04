@@ -11,6 +11,7 @@ interface UseProviderModelsParams {
 
 interface UseProviderModelsResult {
   models: LlmModel[]
+  loading: boolean
 }
 
 export function useProviderModels({
@@ -52,8 +53,10 @@ export function useProviderModels({
     }
   }, [enabled, onError, providerId])
 
+  const settled = enabled && providerId !== null && loadedProviderId === providerId
+
   return {
-    models:
-      enabled && providerId !== null && loadedProviderId === providerId ? models : [],
+    models: settled ? models : [],
+    loading: enabled && providerId !== null && !settled,
   }
 }

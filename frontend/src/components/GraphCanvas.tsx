@@ -26,6 +26,7 @@ interface GraphCanvasProps {
   nodes: FlowNode[]
   edges: Edge[]
   nodeCatalog: NodeCatalogItem[]
+  runDisabledReason: string | null
   onSelectNode: (id: string | null) => void
   onNodesChange: (changes: NodeChange[]) => void
   onMoveNode: (id: string, x: number, y: number) => void
@@ -47,6 +48,7 @@ function GraphCanvasInner({
   nodes,
   edges,
   nodeCatalog,
+  runDisabledReason,
   onSelectNode,
   onNodesChange,
   onMoveNode,
@@ -222,6 +224,11 @@ function GraphCanvasInner({
         <Background gap={24} color="rgba(255,255,255,0.08)" />
         <Controls />
       </ReactFlow>
+      {runDisabledReason ? (
+        <div className="pixel-pill absolute left-3 top-3 z-10 max-w-[70%] text-[var(--muted)]">
+          Can't run: {runDisabledReason}
+        </div>
+      ) : null}
       {contextMenu ? (
         <ContextMenu
           label={contextMenu.label}

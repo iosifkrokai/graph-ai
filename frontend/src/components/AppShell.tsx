@@ -1,8 +1,12 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 
 import type { ApiError } from '../lib/types'
 import { SettingsModal } from './SettingsModal'
 import { UserMenu } from './UserMenu'
+
+// Auto-dismiss the error banner after this long so a transient failure
+// doesn't linger on screen forever if the user doesn't notice it.
+const ERROR_BANNER_TIMEOUT_MS = 8000
 
 interface AppShellProps {
   email: string
@@ -10,6 +14,7 @@ interface AppShellProps {
   executionStatus: string | null
   error: string | null
   onOpenHistory: () => void
+  onDismissError: () => void
   onLogout: () => void
   onDeleteAccount: () => void
   onError: (err: ApiError) => void
@@ -22,12 +27,21 @@ export function AppShell({
   executionStatus,
   error,
   onOpenHistory,
+  onDismissError,
   onLogout,
   onDeleteAccount,
   onError,
   children,
 }: AppShellProps) {
   const [showSettings, setShowSettings] = useState(false)
+
+  useEffect(() => {
+    if (!error) {
+      return
+    }
+    const timer = window.setTimeout(onDismissError, ERROR_BANNER_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [error, onDismissError])
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">
@@ -65,7 +79,18 @@ export function AppShell({
           onError={onError}
         />
       ) : null}
-      {error ? <div className="pixel-banner">{error}</div> : null}
+      {error ? (
+        <div className="pixel-banner flex items-center justify-between gap-3">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="pixel-icon"
+            onClick={onDismissError}
+          >
+            ✕
+          </button>
+        </div>
+      ) : null}
       <main className="grid h-[calc(100vh-84px)] grid-cols-[280px_1fr_320px] gap-3 px-4 pt-4 pb-4">
         {children}
       </main>

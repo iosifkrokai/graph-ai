@@ -51,6 +51,7 @@ export function ProviderSettings({ onError }: ProviderSettingsProps) {
   const [baseUrl, setBaseUrl] = useState(PROVIDER_TYPES.ollama.defaultBaseUrl)
   const [baseUrlTouched, setBaseUrlTouched] = useState(false)
   const [apiKey, setApiKey] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
   const spec = PROVIDER_TYPES[type]
   const apiKeyMissing = spec.requiresApiKey && !apiKey.trim()
@@ -96,6 +97,7 @@ export function ProviderSettings({ onError }: ProviderSettingsProps) {
 
   async function handleDelete(providerId: number): Promise<void> {
     await removeProvider(providerId)
+    setConfirmDeleteId(null)
   }
 
   return (
@@ -115,13 +117,34 @@ export function ProviderSettings({ onError }: ProviderSettingsProps) {
                 {provider.base_url ? ` · ${provider.base_url}` : ''}
               </div>
             </div>
-            <button
-              type="button"
-              className="pixel-icon danger"
-              onClick={() => void handleDelete(provider.id)}
-            >
-              Del
-            </button>
+            {confirmDeleteId === provider.id ? (
+              <>
+                <button
+                  type="button"
+                  className="pixel-icon danger"
+                  title="Confirm delete"
+                  onClick={() => void handleDelete(provider.id)}
+                >
+                  ✓
+                </button>
+                <button
+                  type="button"
+                  className="pixel-icon"
+                  title="Cancel"
+                  onClick={() => setConfirmDeleteId(null)}
+                >
+                  ✕
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="pixel-icon danger"
+                onClick={() => setConfirmDeleteId(provider.id)}
+              >
+                Del
+              </button>
+            )}
           </div>
         ))}
       </div>

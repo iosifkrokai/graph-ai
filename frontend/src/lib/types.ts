@@ -2,6 +2,8 @@ export type NodeType = string
 
 export type ExecutionStatus = 'created' | 'running' | 'success' | 'failed'
 
+export const ACTIVE_STATUSES: ExecutionStatus[] = ['created', 'running']
+
 export interface RunInputPayload {
   value: string
 }

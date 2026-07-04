@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { createExecution, getExecutions, streamExecution } from '../lib/api'
-import type {
-  ApiError,
-  Execution,
-  ExecutionStatus,
-  RunInputPayload,
-} from '../lib/types'
-
-// Executions in these states are still being processed by the worker.
-const ACTIVE_STATUSES: ExecutionStatus[] = ['created', 'running']
+import type { ApiError, Execution, RunInputPayload } from '../lib/types'
+import { ACTIVE_STATUSES } from '../lib/types'
 
 // Interval for the polling fallback when the SSE stream ends before settling.
 const STREAM_POLL_FALLBACK_MS = 3000

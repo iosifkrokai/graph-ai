@@ -1,201 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Node as FlowNode } from 'reactflow'
 
-import { getLlmProviderModels, getLlmProviders, getTelegramBots } from '../lib/api'
-import type {
-  LlmModel,
-  LlmProvider,
-  NodeCatalogItem,
-  NodeCatalogField,
-  NodeType,
-  TelegramBot,
-} from '../lib/types'
-import { matchesVisibility, validateFields } from '../lib/validation'
-import { NumberInput } from './NumberInput'
+import type { NodeCatalogItem, NodeType } from '../lib/types'
+import { validateFields } from '../lib/validation'
+import { NodeFieldsForm } from './NodeFieldsForm'
 
 interface InspectorPanelProps {
   node: FlowNode | null
   nodeCatalog: NodeCatalogItem[]
   onSaveNode: (id: string, data: Record<string, unknown>) => Promise<boolean>
-}
-
-function TextField({
-  value,
-  placeholder,
-  onChange,
-}: {
-  value: unknown
-  placeholder: string | null
-  onChange: (value: string) => void
-}) {
-  return (
-    <input
-      className="pixel-input"
-      value={String(value ?? '')}
-      placeholder={placeholder ?? ''}
-      onChange={(event) => onChange(event.target.value)}
-    />
-  )
-}
-
-function TextAreaField({
-  value,
-  placeholder,
-  onChange,
-}: {
-  value: unknown
-  placeholder: string | null
-  onChange: (value: string) => void
-}) {
-  return (
-    <textarea
-      className="pixel-textarea"
-      value={String(value ?? '')}
-      placeholder={placeholder ?? ''}
-      onChange={(event) => onChange(event.target.value)}
-    />
-  )
-}
-
-function NumberField({
-  field,
-  value,
-  onChange,
-}: {
-  field: NodeCatalogField
-  value: unknown
-  onChange: (value: number) => void
-}) {
-  return (
-    <NumberInput
-      displayValue={Number(value ?? field.default ?? field.validators.ge ?? 0)}
-      min={field.validators.ge}
-      max={field.validators.le}
-      onChangeRaw={(raw) => onChange(Number(raw))}
-    />
-  )
-}
-
-function OptionalNumberField({
-  field,
-  value,
-  onChange,
-}: {
-  field: NodeCatalogField
-  value: unknown
-  onChange: (value: number | null) => void
-}) {
-  const displayValue =
-    value === null || value === undefined || value === '' ? '' : Number(value)
-
-  return (
-    <NumberInput
-      displayValue={displayValue}
-      placeholder="default"
-      min={field.validators.ge}
-      max={field.validators.le}
-      onChangeRaw={(raw) => onChange(raw === '' ? null : Number(raw))}
-    />
-  )
-}
-
-function SelectField({
-  value,
-  options,
-  onChange,
-}: {
-  value: unknown
-  options: string[]
-  onChange: (value: string) => void
-}) {
-  return (
-    <select
-      className="pixel-input"
-      value={String(value ?? options[0] ?? '')}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      {options.map((option) => (
-        <option key={option} value={option}>
-          {option}
-        </option>
-      ))}
-    </select>
-  )
-}
-
-function ProviderField({
-  providers,
-  value,
-  onChange,
-}: {
-  providers: LlmProvider[]
-  value: unknown
-  onChange: (value: number) => void
-}) {
-  return (
-    <select
-      className="pixel-input"
-      value={String(value ?? '')}
-      onChange={(event) => onChange(Number(event.target.value))}
-    >
-      <option value="">-- select provider --</option>
-      {providers.map((provider) => (
-        <option key={provider.id} value={provider.id}>
-          {provider.name}
-        </option>
-      ))}
-    </select>
-  )
-}
-
-function TelegramBotField({
-  bots,
-  value,
-  onChange,
-}: {
-  bots: TelegramBot[]
-  value: unknown
-  onChange: (value: number) => void
-}) {
-  return (
-    <select
-      className="pixel-input"
-      value={String(value ?? '')}
-      onChange={(event) => onChange(Number(event.target.value))}
-    >
-      <option value="">-- select bot --</option>
-      {bots.map((bot) => (
-        <option key={bot.id} value={bot.id}>
-          {bot.name}
-        </option>
-      ))}
-    </select>
-  )
-}
-
-function ModelField({
-  models,
-  value,
-  onChange,
-}: {
-  models: LlmModel[]
-  value: unknown
-  onChange: (value: string) => void
-}) {
-  return (
-    <select
-      className="pixel-input"
-      value={String(value ?? '')}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      <option value="">-- select model --</option>
-      {models.map((model) => (
-        <option key={model.name} value={model.name}>
-          {model.name}
-        </option>
-      ))}
-    </select>
-  )
 }
 
 function SaveIndicator({
@@ -231,9 +44,6 @@ export function InspectorPanel({
   onSaveNode,
 }: InspectorPanelProps) {
   const nodeType = (node?.data?.nodeType as NodeType | undefined) ?? null
-  const [providers, setProviders] = useState<LlmProvider[]>([])
-  const [models, setModels] = useState<LlmModel[]>([])
-  const [telegramBots, setTelegramBots] = useState<TelegramBot[]>([])
   const [draftData, setDraftData] = useState<Record<string, unknown>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>(
     'idle',
@@ -255,17 +65,6 @@ export function InspectorPanel({
     [fields],
   )
 
-  const hasProviderDatasource = fields.some(
-    (field) => field.datasource?.kind === 'llm_provider',
-  )
-  const hasModelDatasource = fields.some(
-    (field) => field.datasource?.kind === 'llm_model',
-  )
-  const hasTelegramBotDatasource = fields.some(
-    (field) => field.datasource?.kind === 'telegram_bot',
-  )
-
-  const selectedProviderId = Number(draftData['llm_provider_id'] ?? 0)
   const validationErrors = useMemo(
     () => validateFields(fields, draftData),
     [fields, draftData],
@@ -364,188 +163,6 @@ export function InspectorPanel({
     })
   }, [draftData, node, onSaveNode])
 
-  useEffect(() => {
-    let cancelled = false
-
-    if (!hasProviderDatasource) {
-      void Promise.resolve().then(() => {
-        if (!cancelled) {
-          setProviders([])
-        }
-      })
-      return () => { cancelled = true }
-    }
-
-    void getLlmProviders()
-      .then((data) => {
-        if (!cancelled) {
-          setProviders(data)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setProviders([])
-        }
-      })
-
-    return () => { cancelled = true }
-  }, [hasProviderDatasource])
-
-  useEffect(() => {
-    let cancelled = false
-
-    if (!hasModelDatasource || !selectedProviderId) {
-      void Promise.resolve().then(() => {
-        if (!cancelled) {
-          setModels([])
-        }
-      })
-      return () => { cancelled = true }
-    }
-
-    void getLlmProviderModels(selectedProviderId)
-      .then((data) => {
-        if (!cancelled) {
-          setModels(data)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setModels([])
-        }
-      })
-
-    return () => { cancelled = true }
-  }, [hasModelDatasource, selectedProviderId])
-
-  useEffect(() => {
-    let cancelled = false
-
-    if (!hasTelegramBotDatasource) {
-      void Promise.resolve().then(() => {
-        if (!cancelled) {
-          setTelegramBots([])
-        }
-      })
-      return () => { cancelled = true }
-    }
-
-    void getTelegramBots()
-      .then((data) => {
-        if (!cancelled) {
-          setTelegramBots(data)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setTelegramBots([])
-        }
-      })
-
-    return () => { cancelled = true }
-  }, [hasTelegramBotDatasource])
-
-  function updateField(key: string, value: string | number | null) {
-    setDraftData((current) => {
-      const next = { ...current, [key]: value }
-      // Generic clear-on-hide: any sibling field whose visibility depends on
-      // this one gets reset once it's no longer visible, so a hidden field's
-      // stale value (e.g. a bot ID left over from a different format) never
-      // gets saved silently alongside the new value.
-      for (const dependent of fields) {
-        if (dependent.visible_when?.field === key && !matchesVisibility(dependent.visible_when, value)) {
-          next[dependent.name] = null
-        }
-      }
-      return next
-    })
-  }
-
-  function renderField(field: NodeCatalogField) {
-    const value = draftData[field.name]
-
-    if (field.ui.widget === 'provider') {
-      return (
-        <ProviderField
-          providers={providers}
-          value={value}
-          onChange={(providerId) => {
-            updateField(field.name, providerId)
-            updateField('model', '')
-          }}
-        />
-      )
-    }
-
-    if (field.ui.widget === 'model') {
-      return (
-        <ModelField
-          models={models}
-          value={value}
-          onChange={(model) => updateField(field.name, model)}
-        />
-      )
-    }
-
-    if (field.ui.widget === 'telegram_bot') {
-      return (
-        <TelegramBotField
-          bots={telegramBots}
-          value={value}
-          onChange={(botId) => updateField(field.name, botId)}
-        />
-      )
-    }
-
-    if (field.ui.widget === 'select') {
-      return (
-        <SelectField
-          value={value}
-          options={field.validators.select ?? []}
-          onChange={(selected) => updateField(field.name, selected)}
-        />
-      )
-    }
-
-    if (field.ui.widget === 'number') {
-      return (
-        <NumberField
-          field={field}
-          value={value}
-          onChange={(numberValue) => updateField(field.name, numberValue)}
-        />
-      )
-    }
-
-    if (field.ui.widget === 'optional_number') {
-      return (
-        <OptionalNumberField
-          field={field}
-          value={value}
-          onChange={(numberValue) => updateField(field.name, numberValue)}
-        />
-      )
-    }
-
-    if (field.ui.widget === 'textarea') {
-      return (
-        <TextAreaField
-          value={value}
-          placeholder={field.ui.placeholder}
-          onChange={(text) => updateField(field.name, text)}
-        />
-      )
-    }
-
-    return (
-      <TextField
-        value={value}
-        placeholder={field.ui.placeholder}
-        onChange={(text) => updateField(field.name, text)}
-      />
-    )
-  }
-
   return (
     <aside className="pixel-panel pixel-scroll flex h-full flex-col gap-6 overflow-y-auto">
       <div>
@@ -564,33 +181,12 @@ export function InspectorPanel({
             <div className="text-xs text-[var(--muted)]">
               Type: <span className="text-[var(--accent)]">{nodeType}</span>
             </div>
-            {fields
-              .filter((field) => {
-                // Declarative conditional visibility: a field with
-                // visible_when is only shown once its controlling sibling
-                // field holds the required value. Driven entirely by the
-                // catalog, so a future format-gated field needs no new
-                // frontend branch — just a visible_when in its NodeFieldSpec.
-                if (!field.visible_when) {
-                  return true
-                }
-                return matchesVisibility(field.visible_when, draftData[field.visible_when.field])
-              })
-              .map((field) => (
-                <label key={field.name} className="pixel-label">
-                  {field.ui.label}
-                  {renderField(field)}
-                  {validationErrors[field.name] ? (
-                    <span className="text-xs text-[var(--danger)]">
-                      {validationErrors[field.name]}
-                    </span>
-                  ) : field.ui.help ? (
-                    <span className="text-xs text-[var(--muted)]">
-                      {field.ui.help}
-                    </span>
-                  ) : null}
-                </label>
-              ))}
+            <NodeFieldsForm
+              fields={fields}
+              data={draftData}
+              errors={validationErrors}
+              onFieldChange={(_, next) => setDraftData(next)}
+            />
           </div>
         )}
       </div>

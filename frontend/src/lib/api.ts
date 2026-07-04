@@ -42,7 +42,19 @@ async function request<T>(
     headers['Authorization'] = `Bearer ${currentToken}`
   }
 
-  const response = await fetch(`${BASE}${path}`, { ...options, headers })
+  let response: Response
+  try {
+    response = await fetch(`${BASE}${path}`, { ...options, headers })
+  } catch {
+    // fetch() throws a raw TypeError for network-level failures (dropped
+    // connection, DNS, CORS, offline, ...) rather than an ApiError; normalize
+    // it here so callers only ever have to handle one error shape.
+    const networkError: ApiError = {
+      message: 'Network error — check your connection.',
+      status: 0,
+    }
+    throw networkError
+  }
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface ContextMenuProps {
   label: string
@@ -16,6 +16,7 @@ export function ContextMenu({
   onClose,
 }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const [confirming, setConfirming] = useState(false)
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -36,13 +37,32 @@ export function ContextMenu({
       <div className="border-b border-white/10 px-3 py-2 text-xs text-[var(--muted)]">
         {label}
       </div>
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--danger)] hover:bg-white/5"
-        onClick={onDelete}
-      >
-        Delete
-      </button>
+      {confirming ? (
+        <div className="flex">
+          <button
+            type="button"
+            className="flex-1 px-3 py-2 text-sm text-[var(--danger)] hover:bg-white/5"
+            onClick={onDelete}
+          >
+            Confirm delete
+          </button>
+          <button
+            type="button"
+            className="px-3 py-2 text-sm text-[var(--muted)] hover:bg-white/5"
+            onClick={() => setConfirming(false)}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--danger)] hover:bg-white/5"
+          onClick={() => setConfirming(true)}
+        >
+          Delete
+        </button>
+      )}
     </div>
   )
 }
