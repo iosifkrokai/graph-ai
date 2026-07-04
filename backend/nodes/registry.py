@@ -16,6 +16,8 @@ from nodes.input import DEFINITION as INPUT_DEFINITION
 from nodes.llm import DEFINITION as LLM_DEFINITION
 from nodes.output import DEFINITION as OUTPUT_DEFINITION
 from nodes.template import DEFINITION as TEMPLATE_DEFINITION
+from nodes.vector_ingest import DEFINITION as VECTOR_INGEST_DEFINITION
+from nodes.vector_search import DEFINITION as VECTOR_SEARCH_DEFINITION
 from nodes.web_search import DEFINITION as WEB_SEARCH_DEFINITION
 from schemas import NodeCatalogItem
 
@@ -27,6 +29,8 @@ NODE_DEFINITIONS: tuple[NodeDefinition, ...] = (
     HTTP_REQUEST_DEFINITION,
     CONDITION_DEFINITION,
     CODE_TRANSFORM_DEFINITION,
+    VECTOR_INGEST_DEFINITION,
+    VECTOR_SEARCH_DEFINITION,
     OUTPUT_DEFINITION,
 )
 

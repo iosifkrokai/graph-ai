@@ -119,6 +119,34 @@ export function ConditionIcon(props: IconProps) {
   )
 }
 
+export function VectorIngestIcon(props: IconProps) {
+  return (
+    <svg width={SIZE} height={SIZE} viewBox="0 0 16 16" style={STYLE} fill="none" {...props}>
+      <rect x="7" y="1" width="2" height="5" fill="var(--accent-2)" />
+      <rect x="5" y="5" width="2" height="2" fill="var(--accent-2)" />
+      <rect x="9" y="5" width="2" height="2" fill="var(--accent-2)" />
+      <rect x="7" y="7" width="2" height="2" fill="var(--accent-2)" />
+      <rect x="2" y="10" width="2" height="4" fill="var(--accent)" />
+      <rect x="12" y="10" width="2" height="4" fill="var(--accent)" />
+      <rect x="2" y="13" width="12" height="2" fill="var(--accent)" />
+    </svg>
+  )
+}
+
+export function VectorSearchIcon(props: IconProps) {
+  return (
+    <svg width={SIZE} height={SIZE} viewBox="0 0 16 16" style={STYLE} fill="none" {...props}>
+      <rect x="3" y="2" width="6" height="2" fill="var(--accent-2)" />
+      <rect x="2" y="4" width="2" height="4" fill="var(--accent-2)" />
+      <rect x="8" y="4" width="2" height="4" fill="var(--accent-2)" />
+      <rect x="3" y="8" width="6" height="2" fill="var(--accent-2)" />
+      <rect x="9" y="9" width="2" height="2" fill="var(--accent)" />
+      <rect x="11" y="11" width="2" height="2" fill="var(--accent)" />
+      <rect x="13" y="13" width="2" height="2" fill="var(--accent)" />
+    </svg>
+  )
+}
+
 export function NodeIcon({ iconKey }: { iconKey: string }) {
   if (iconKey === 'llm') {
     return <LlmIcon />
@@ -142,6 +170,14 @@ export function NodeIcon({ iconKey }: { iconKey: string }) {
 
   if (iconKey === 'code_transform') {
     return <CodeTransformIcon />
+  }
+
+  if (iconKey === 'vector_ingest') {
+    return <VectorIngestIcon />
+  }
+
+  if (iconKey === 'vector_search') {
+    return <VectorSearchIcon />
   }
 
   if (iconKey === 'output') {

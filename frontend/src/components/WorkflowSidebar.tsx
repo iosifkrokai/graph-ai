@@ -12,6 +12,7 @@ const NODE_CATEGORIES: { label: string; types: NodeType[] }[] = [
   { label: 'AI', types: ['llm'] },
   { label: 'Data', types: ['web_search', 'http_request'] },
   { label: 'Logic', types: ['template', 'condition', 'code_transform'] },
+  { label: 'RAG', types: ['vector_ingest', 'vector_search'] },
 ]
 
 function groupNodeCatalog(

@@ -12,6 +12,8 @@ from nodes import (
     ConditionNodeHandler,
     HTTPRequestNodeHandler,
     TemplateNodeHandler,
+    VectorIngestNodeHandler,
+    VectorSearchNodeHandler,
     build_node_catalog,
     check_edge_ports,
     get_node_definition,
@@ -496,4 +498,166 @@ class TestCodeTransformNode:
                     {"code": "output = open('/etc/passwd').read()"},
                     parent_values=["x"],
                 )
+            )
+
+
+class _FakePoint:
+    """Minimal stand-in for a Qdrant ScoredPoint."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+
+class _FakeQueryResponse:
+    """Minimal stand-in for a Qdrant QueryResponse."""
+
+    def __init__(self, points: list[_FakePoint]) -> None:
+        self.points = points
+
+
+class _FakeQdrantClient:
+    """In-memory stand-in for AsyncQdrantClient."""
+
+    def __init__(self) -> None:
+        self.collections: dict[str, list[tuple[list[float], dict[str, object]]]] = {}
+
+    async def collection_exists(self, name: str) -> bool:
+        return name in self.collections
+
+    async def create_collection(
+        self, collection_name: str, vectors_config: object
+    ) -> None:
+        del vectors_config
+        self.collections.setdefault(collection_name, [])
+
+    async def upsert(self, collection_name: str, points: list) -> None:
+        store = self.collections.setdefault(collection_name, [])
+        for point in points:
+            store.append((point.vector, point.payload))
+
+    async def query_points(
+        self, collection_name: str, query: list[float], limit: int
+    ) -> _FakeQueryResponse:
+        del query
+        store = self.collections.get(collection_name, [])
+        return _FakeQueryResponse([_FakePoint(payload) for _, payload in store[:limit]])
+
+
+def _fake_embed_texts(texts: list[str]) -> list[list[float]]:
+    """Deterministic fake embedding: a single feature, the text length."""
+    return [[float(len(text))] for text in texts]
+
+
+class TestVectorIngestNode:
+    """Tests for the vector-ingest node handler."""
+
+    @pytest.mark.asyncio
+    async def test_ingest_chunks_and_stores(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ingesting text stores one chunk per call and reports the count."""
+        client = _FakeQdrantClient()
+        monkeypatch.setattr("nodes.vector_ingest.embed_texts", _fake_embed_texts)
+        monkeypatch.setattr("nodes.vector_ingest.get_qdrant_client", lambda: client)
+
+        handler = VectorIngestNodeHandler()
+        result = await handler.execute(
+            _context({"collection": "docs"}, parent_values=["hello world"])
+        )
+
+        if result.output != "Ingested 1 chunk(s) into 'docs'.":
+            pytest.fail("Unexpected confirmation message")
+        if client.collections["docs"][0][1] != {"text": "hello world"}:
+            pytest.fail("Chunk text was not stored in the collection")
+
+    @pytest.mark.asyncio
+    async def test_missing_collection_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An empty collection name raises a graph validation error."""
+        monkeypatch.setattr("nodes.vector_ingest.embed_texts", _fake_embed_texts)
+        handler = VectorIngestNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(_context({}, parent_values=["hello"]))
+
+    @pytest.mark.asyncio
+    async def test_empty_upstream_text_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty upstream text raises a graph validation error."""
+        monkeypatch.setattr("nodes.vector_ingest.embed_texts", _fake_embed_texts)
+        handler = VectorIngestNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context({"collection": "docs"}, parent_values=["   "])
+            )
+
+
+class TestVectorSearchNode:
+    """Tests for the vector-search node handler."""
+
+    @pytest.mark.asyncio
+    async def test_search_returns_matching_chunks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Search returns up to top_k stored chunks joined by a separator."""
+        client = _FakeQdrantClient()
+        client.collections["docs"] = [
+            ([1.0], {"text": "chunk one"}),
+            ([2.0], {"text": "chunk two"}),
+            ([3.0], {"text": "chunk three"}),
+        ]
+        monkeypatch.setattr("nodes.vector_search.embed_texts", _fake_embed_texts)
+        monkeypatch.setattr("nodes.vector_search.get_qdrant_client", lambda: client)
+
+        handler = VectorSearchNodeHandler()
+        result = await handler.execute(
+            _context({"collection": "docs", "top_k": 2}, parent_values=["a query"])
+        )
+
+        if result.output != "chunk one\n\n---\n\nchunk two":
+            pytest.fail("Search did not return the expected chunks in order")
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_collection_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Searching a collection that was never ingested into raises an error."""
+        client = _FakeQdrantClient()
+        monkeypatch.setattr("nodes.vector_search.embed_texts", _fake_embed_texts)
+        monkeypatch.setattr("nodes.vector_search.get_qdrant_client", lambda: client)
+
+        handler = VectorSearchNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context({"collection": "missing", "top_k": 4}, parent_values=["query"])
+            )
+
+    @pytest.mark.asyncio
+    async def test_missing_collection_rejected(self) -> None:
+        """An empty collection name raises a graph validation error."""
+        handler = VectorSearchNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(_context({"top_k": 4}, parent_values=["query"]))
+
+    @pytest.mark.asyncio
+    async def test_empty_query_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An empty upstream query raises a graph validation error."""
+        client = _FakeQdrantClient()
+        client.collections["docs"] = []
+        monkeypatch.setattr("nodes.vector_search.get_qdrant_client", lambda: client)
+
+        handler = VectorSearchNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context({"collection": "docs", "top_k": 4}, parent_values=["  "])
+            )
+
+    @pytest.mark.asyncio
+    async def test_invalid_top_k_rejected(self) -> None:
+        """A top_k outside [1, 20] raises a graph validation error."""
+        handler = VectorSearchNodeHandler()
+        with pytest.raises(ExecutionGraphValidationError):
+            await handler.execute(
+                _context({"collection": "docs", "top_k": 0}, parent_values=["query"])
             )

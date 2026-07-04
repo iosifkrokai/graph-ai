@@ -16,6 +16,8 @@ from nodes.registry import (
     get_node_definition,
 )
 from nodes.template import TemplateNodeHandler
+from nodes.vector_ingest import VectorIngestNodeHandler
+from nodes.vector_search import VectorSearchNodeHandler
 from nodes.web_search import WebSearchNodeHandler
 
 __all__ = [
@@ -34,6 +36,8 @@ __all__ = [
     "OnToken",
     "OutputNodeHandler",
     "TemplateNodeHandler",
+    "VectorIngestNodeHandler",
+    "VectorSearchNodeHandler",
     "WebSearchNodeHandler",
     "build_node_catalog",
     "check_edge_ports",

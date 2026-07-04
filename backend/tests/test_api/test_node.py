@@ -32,6 +32,8 @@ def _extra_fields_by_type(node_type: NodeType, *, llm_provider_id: int | None) -
             "case_sensitive": "false",
         },
         NodeType.CODE_TRANSFORM: {"code": "output = input"},
+        NodeType.VECTOR_INGEST: {"collection": "docs"},
+        NodeType.VECTOR_SEARCH: {"collection": "docs", "top_k": 4},
         NodeType.OUTPUT: {"format": OutputNodeFormat.TXT},
     }
     return by_type[node_type]
@@ -53,6 +55,8 @@ EXPECTED_FIELDS_BY_TYPE: dict[NodeType, set[str]] = {
     NodeType.HTTP_REQUEST: {"label", "url", "method"},
     NodeType.CONDITION: {"label", "condition_type", "value", "case_sensitive"},
     NodeType.CODE_TRANSFORM: {"label", "code"},
+    NodeType.VECTOR_INGEST: {"label", "collection"},
+    NodeType.VECTOR_SEARCH: {"label", "collection", "top_k"},
     NodeType.OUTPUT: {"label", "format"},
 }
 

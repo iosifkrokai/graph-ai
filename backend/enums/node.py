@@ -13,6 +13,8 @@ class NodeType(StrEnum):
     HTTP_REQUEST = auto()
     CONDITION = auto()
     CODE_TRANSFORM = auto()
+    VECTOR_INGEST = auto()
+    VECTOR_SEARCH = auto()
     OUTPUT = auto()
 
 
