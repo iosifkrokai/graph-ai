@@ -11,6 +11,12 @@ import type {
 } from '../lib/types'
 import { OutputRenderer } from './OutputRenderer'
 
+export interface NodeMeta {
+  type: string
+  label: string
+  portType: PortType | null
+}
+
 // Executions in these states are still being processed by the worker.
 const ACTIVE_STATUSES: ExecutionStatus[] = ['created', 'running']
 
@@ -31,7 +37,7 @@ interface ChatPanelProps {
   runEnabled: boolean
   runDisabledReason: string | null
   loading: boolean
-  outputPortByNodeId: Map<number, PortType | null>
+  nodeMetaByNodeId: Map<number, NodeMeta>
   onRun: (input: RunInputPayload) => void
 }
 
@@ -56,6 +62,22 @@ function formatTime(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function formatDuration(startedAt: string, finishedAt: string | null): string | null {
+  if (!finishedAt) {
+    return null
+  }
+  const start = new Date(startedAt).getTime()
+  const finish = new Date(finishedAt).getTime()
+  if (Number.isNaN(start) || Number.isNaN(finish) || finish < start) {
+    return null
+  }
+  const ms = finish - start
+  if (ms < 1000) {
+    return `${ms}ms`
+  }
+  return `${(ms / 1000).toFixed(1)}s`
 }
 
 function joinLiveTokens(liveTokens: LiveTokens): string {
@@ -98,7 +120,7 @@ export function ChatPanel({
   runEnabled,
   runDisabledReason,
   loading,
-  outputPortByNodeId,
+  nodeMetaByNodeId,
   onRun,
 }: ChatPanelProps) {
   const [draft, setDraft] = useState('')
@@ -199,7 +221,7 @@ export function ChatPanel({
                     ? versionNumbers[turn.execution.version_id]
                     : undefined
                 }
-                outputPortByNodeId={outputPortByNodeId}
+                nodeMetaByNodeId={nodeMetaByNodeId}
               />
             ))}
             <div ref={bottomRef} />
@@ -237,11 +259,11 @@ export function ChatPanel({
 function ChatTurnView({
   turn,
   versionNumber,
-  outputPortByNodeId,
+  nodeMetaByNodeId,
 }: {
   turn: ChatTurn
   versionNumber: number | undefined
-  outputPortByNodeId: Map<number, PortType | null>
+  nodeMetaByNodeId: Map<number, NodeMeta>
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [nodeResults, setNodeResults] = useState<NodeExecutionResult[] | null>(null)
@@ -293,25 +315,35 @@ function ChatTurnView({
           ) : !nodeResults || nodeResults.length === 0 ? (
             <div className="text-[var(--muted)]">No node results recorded.</div>
           ) : (
-            nodeResults.map((nodeResult) => (
-              <div key={nodeResult.id} className="border-b border-white/10 pb-2 last:border-0 last:pb-0">
-                <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wide text-[var(--muted)]">
-                  <span>Node #{nodeResult.node_id}</span>
-                  <span className={STATUS_COLORS[nodeResult.status]}>
-                    {nodeResult.status}
-                  </span>
+            nodeResults.map((nodeResult) => {
+              const meta = nodeMetaByNodeId.get(nodeResult.node_id)
+              const duration = formatDuration(
+                nodeResult.started_at,
+                nodeResult.finished_at,
+              )
+              return (
+                <div key={nodeResult.id} className="border-b border-white/10 pb-2 last:border-0 last:pb-0">
+                  <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wide text-[var(--muted)]">
+                    <span className="pixel-pill text-[10px] normal-case">
+                      {meta?.label ?? `Node #${nodeResult.node_id}`}
+                    </span>
+                    <span className={STATUS_COLORS[nodeResult.status]}>
+                      {nodeResult.status}
+                    </span>
+                    {duration ? <span>{duration}</span> : null}
+                  </div>
+                  {nodeResult.output !== null ? (
+                    <OutputRenderer
+                      value={nodeResult.output}
+                      portType={meta?.portType ?? null}
+                    />
+                  ) : null}
+                  {nodeResult.error ? (
+                    <div className="text-[var(--danger)]">{nodeResult.error}</div>
+                  ) : null}
                 </div>
-                {nodeResult.output !== null ? (
-                  <OutputRenderer
-                    value={nodeResult.output}
-                    portType={outputPortByNodeId.get(nodeResult.node_id) ?? null}
-                  />
-                ) : null}
-                {nodeResult.error ? (
-                  <div className="text-[var(--danger)]">{nodeResult.error}</div>
-                ) : null}
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       ) : null}

@@ -1,156 +1,237 @@
 # Graph AI — Roadmap
 
-Visual graph-based AI workflow builder (FastAPI + React + PostgreSQL).
-This document tracks where the product is today and the sequenced plan to grow it
-into an async, multi-provider orchestration platform.
+Visual graph-based AI workflow builder (FastAPI + React + PostgreSQL). This document
+tracks where the product is today and the prioritized plan to grow it — both new
+capabilities and hardening of what already exists. There is no separate
+breadth/depth split anymore: everything below is one prioritized list, verified
+against the actual code as of this writing (not carried forward from stale notes).
 
 ## Where we are today
 
-- **Backend** — layered `router → usecase → repository`, 6 entities (User, Workflow,
-  Node, Edge, Execution, LLMProvider), JWT auth, ~34 API tests on testcontainers.
-- **Frontend** — React 19 + React Flow graph editor, catalog-driven node inspector,
-  4 node types, pixel-art theme.
-- **Execution engine** (`backend/usecases/execution.py`) — 4 node types
-  (`INPUT`, `LLM`, `WEB_SEARCH`, `OUTPUT`), correct graph validation
-  (single input/output, acyclic via Kahn, connectivity via DFS).
+- **Backend** — layered `router → usecase → repository`, ARQ + Redis background
+  execution, 8 entities (User, Workflow, Node, Edge, Execution, NodeExecution,
+  LLMProvider, TelegramBot), JWT auth, encrypted secrets (Fernet), typed ports,
+  workflow versioning, Telegram bot polling + reply integration.
+- **Frontend** — React 19 + React Flow graph editor, catalog-driven node inspector
+  and node-creation dialog, a unified Chat view (merged with what used to be a
+  separate Executions history: per-turn version pill, timestamps, and a per-node
+  "Details" expansion via a generic `OutputRenderer`), a single Settings modal
+  (LLM Providers + Telegram Bots as tabs, on a shared `Modal` primitive).
+- **Execution engine** (`backend/usecases/execution.py`) — 6 node types (`INPUT`,
+  `LLM`, `WEB_SEARCH`, `TEMPLATE`, `HTTP_REQUEST`, `OUTPUT`), async execution with
+  retries/backoff/reaper, wave-parallel scheduling, per-node result persistence
+  (`node_executions`), SSE streaming with a polling fallback, workflow versioning
+  with pinned reruns.
+- **Integrations** — multi-provider LLM (Ollama/OpenAI/Anthropic/OpenAI-compatible)
+  with token streaming; Telegram bots (per-user, encrypted token) that can trigger a
+  workflow from an incoming message and receive the reply, including a manually
+  pinned chat ID for non-Telegram-triggered runs.
 
 ## Key limitations driving priorities
 
-1. Execution is **fully synchronous, inside the HTTP request** — no queue/worker;
-   the client never observes `RUNNING`; long LLM calls block the worker.
-2. **Ollama only** — no cloud providers.
-3. **No secret storage** — `utils/crypto.py` is bcrypt-for-passwords only; the
-   provider has no `api_key` field, and `config` (JSONB) is returned to the client.
-4. **Intermediate node outputs are not persisted** — only the final output is stored;
-   on mid-graph failure only a free-text `error` survives.
-5. **No retries / backoff / stuck-execution reaper** — a non-domain exception can
-   strand an execution in `RUNNING` forever.
-6. **No observability** — no logging, metrics, error tracking, or rate limiting.
-7. **Data is strictly `str`, format only `txt`** — no typed ports, files, or multimodality.
-8. **No frontend tests**; plain `useState` state, no undo/redo, copy-paste, or auto-layout.
-9. **No streaming** — Ollama is called with `stream: False`.
+1. **No rate limiting anywhere** — login/register are guessable/DoS-able.
+2. **No CORS middleware** — the shipped SPA can't be served from a different origin
+   without the usual unsafe `allow_origins=["*"]` workaround.
+3. **Multi-step operations aren't atomic** — a crash between two commits (e.g.
+   register's user+provider, or execution create-then-enqueue) leaves orphaned state
+   that nothing reaps.
+4. **Two independent field-rendering implementations on the frontend**
+   (`InspectorPanel.tsx` and `CreateNodeDialog.tsx` each hand-roll the same
+   `TextField`/`NumberField`/`ProviderField`/... set) — a new widget needs updating
+   in two places, exactly the trap the `visible_when` mechanism was built to avoid
+   for field *visibility*, but not yet solved for field *rendering*.
+5. **No global node-output size cap**, and per-attempt LLM streaming duplicates
+   tokens to the client on retry.
+6. **Destructive actions are inconsistently confirmed** — workflow delete and account
+   delete confirm inline; node/edge/provider/bot delete do not.
+7. **No frontend tests**, no undo/redo/multi-select, no React Query — all data
+   fetching is hand-rolled `useState`/`useEffect`.
+8. **Timezone-less datetime columns**, missing unique constraints on `edges`/
+   `llm_providers`, and pinned reruns can't record per-node results for nodes that
+   were since deleted.
 
 ---
 
 ## Phase 0 — Hygiene & foundation ✅ done
 
-Cheap changes that de-risk everything else.
-
-- [x] Fail-fast when the default JWT secret is used in production (`settings/auth.py`,
-      gated by `ENVIRONMENT`).
-- [x] Catch non-`BaseError` in `create_execution`, roll back, and mark `FAILED` so an
-      execution can no longer strand in `RUNNING` (`usecases/execution.py`).
-- [x] Structured logging with execution-id context (`logging_config.py`, wired in `main.py`).
-- [x] Refresh `backend/AGENTS.md` (removed Prefect, `flows/`, `integrations/`, `models/`).
-- [x] Run Alembic migrations in CI: `alembic upgrade head` + `alembic check` catches
-      model↔migration drift (`.github/workflows/backend.yml`).
-- [x] LLM node happy-path test with mocked Ollama chat (`tests/test_api/test_execution.py`).
+- [x] Fail-fast when default JWT secret / Fernet key is used outside `local`/`test`
+      (`settings/environment.py`, `settings/auth.py`, `settings/encryption.py`).
+- [x] Catch non-`BaseError` in `create_execution`, roll back, mark `FAILED`.
+- [x] Structured logging with execution-id context.
+- [x] Migrations run + checked in CI (`alembic upgrade head` + `alembic check`).
 
 ## Phase 1 — Asynchronous execution ✅ done
 
-Unblocks streaming, long pipelines, and scale.
+- [x] ARQ + Redis background execution; `POST /executions` returns `202` immediately.
+- [x] Per-node result table (`node_executions`) + `GET /executions/{id}/nodes`,
+      now actually consumed by the frontend (Chat view's per-turn "Details").
+- [x] Per-node retries with backoff (retryable errors only) + per-node timeout.
+- [x] Idempotent enqueue (`_job_id="execution:{id}"`); stuck-execution reaper cron.
+- [x] Wave-parallel scheduling for independent branches, isolated sessions.
+- [x] SSE streaming (`GET /executions/{id}/stream`) with a client-side polling
+      fallback when the stream ends early or is unsupported.
 
-- [x] Move execution off the request path with **ARQ + Redis** (chosen via a real-Redis
-      PoC test). `POST /executions` validates the graph, persists `CREATED`, enqueues, and
-      returns `202` immediately; a worker (`worker.py`) runs it with its own session.
-      Wiring: `settings/redis.py`, `main.py` lifespan pool, `api/dependencies/queue.py`,
-      `docker-compose.yml` `redis`+`worker` services.
-- [x] Per-node result table (`node_executions`: status, output, timings, error) with
-      per-node persistence in the runner and a `GET /executions/{id}/nodes` endpoint —
-      pinpointed failures and the foundation for resumability + per-node UI status.
-- [x] Per-node retries with exponential backoff (retryable errors only) and a per-node
-      wall-clock timeout (`constants/retry.py`, runner in `usecases/execution.py`).
-- [x] Idempotency of enqueued executions via ARQ `_job_id="execution:{id}"` (dedupes
-      double-submits).
-- [x] Reaper for executions stuck in `RUNNING` (worker crash mid-run) — ARQ cron
-      `reap_stuck_executions` + `ExecutionUsecase.reap_stuck_executions`.
-- [x] Parallelize independent branches via wave scheduling — each concurrent node runs on
-      its own session (`_run_nodes_parallel` in `usecases/execution.py`); the worker enables
-      it by passing `session_factory`.
-- [x] Frontend consumes a `GET /executions/{id}/stream` SSE endpoint (fetch + `ReadableStream`
-      with the Bearer header) instead of interval polling (`api.streamExecution`,
-      `useExecutions.ts`). Server-side status stream today; upgrading to Redis pub/sub for
-      true push is a Phase 5 refinement.
+## Phase 2 — Multi-provider LLM + secrets ✅ done
 
-## Phase 2 — Multi-provider LLM + secrets (2–4 weeks)
+- [x] Fernet-encrypted, write-only `LLMProvider.api_key`; never returned in responses.
+- [x] OpenAI / Anthropic / OpenAI-compatible clients alongside Ollama.
+- [x] Per-node generation params (`temperature`, `max_tokens`, `top_p`), opt-in via
+      the `optional_number` widget.
+- [x] Token streaming provider → worker (Redis pub/sub) → SSE → frontend
+      (`useExecutions.liveTokens`).
 
-- [x] Real key encryption: Fernet (`utils/encryption.py`, `settings/encryption.py` with prod
-      fail-fast) + encrypted, write-only `LLMProvider.api_key` (migration `709163b05319`);
-      the key is never returned in any response. `config` stays for non-secret settings —
-      secrets belong in `api_key`.
-- [x] OpenAI / Anthropic / OpenAI-compatible clients (`llm/openai.py`, `llm/anthropic.py`;
-      enum values `OPENAI`/`ANTHROPIC`/`OPENAI_COMPATIBLE`; `create_llm_client(provider, api_key)`
-      decrypts `api_key` at construction and requires it for cloud providers). Anthropic uses the
-      official `anthropic` SDK (streaming + `get_final_message`), default model `claude-opus-4-8`.
-      Each client wraps SDK errors into domain `LLMProviderConnectionError` (retryable) /
-      `LLMProviderConfigError` (non-retryable, e.g. bad key).
-- [x] Generation params per node: `temperature`, `max_tokens`, `top_p` (`GenerationParams`
-      schema, opt-in via the new `optional_number` widget so unset params are omitted — critical
-      for Anthropic models that reject `temperature`). Honored by every client.
-- [x] Token streaming from provider through to the UI: every client exposes `stream_chat`
-      (`AsyncIterator[str]`); the LLM node forwards each delta via a `NodeExecutionContext.on_token`
-      sink; the worker publishes deltas to the Redis channel `execution:{id}:tokens`
-      (`streaming/tokens.py`); `GET /executions/{id}/stream` multiplexes `token` + `status` SSE
-      frames (`ExecutionUsecase.stream_execution`); the frontend accumulates deltas per node and
-      renders them live (`useExecutions.liveTokens`, `LiveOutput.tsx`). Token streaming is
-      best-effort — a pub/sub failure never breaks the authoritative status stream.
+## Phase 3 — Richer graph & node types ✅ done (core), 🟡 extension in progress
 
-## Phase 3 — Richer graph & node types (4–6 weeks)
+- [x] Typed ports (`PortType` = text/json/file/list) with edge-level compatibility
+      checks (`ports_compatible`, currently exact-match only — the intended
+      extension point for a future coercion table).
+- [x] Prompt/Template and HTTP Request nodes; plugin-based node registration
+      (`NodeDefinition` + `nodes/registry.py` — one module + one list entry per node).
+- [x] Workflow versioning: each run snapshots the live graph
+      (`workflow_versions`), pinned via `executions.version_id`, rerunnable by
+      `version_id`. **Known gap:** a pinned rerun whose nodes were *deleted* (not
+      edited) still can't record `node_executions` rows — `node_id` is a hard FK to
+      the live `nodes` table (see Data layer, below).
+- [x] **Telegram bot integration** (new since the last roadmap pass): per-user
+      `TelegramBot` entity (encrypted token), Input node polls a bot for incoming
+      messages via an ARQ cron (`poll_telegram_updates`, every 10s), Output node
+      replies via the bot after execution finishes, with an optional pinned
+      `telegram_chat_id` for manual (non-Telegram-triggered) runs. Field
+      visibility (`visible_when`) is fully declarative — adding a future format
+      doesn't require new frontend branches.
+- [ ] Condition/Router, Code/Transform, RAG/Vector search, Loop/Map — deferred,
+      need dedicated engine work (branch selection, sandboxing, vector DB).
 
-- [x] Typed ports (`PortType` = text / json / file / list) on `NodeGraphSpec`
-      (`input_port`/`output_port`); edge type-compat validated at two layers —
-      `EdgeUsecase.create_edge` (→ `EdgePortMismatchError`, HTTP 400) and
-      `ExecutionUsecase._build_graph_context` (defense in depth). Compatibility is the single
-      `ports_compatible` choke point (exact-match today; ready for a coercion table). Frontend
-      guards connections client-side via `isValidConnection` in `GraphCanvas`. All current nodes
-      are `text`, so this installs the machinery future non-text nodes need.
-- [~] New nodes — shipped on the plugin foundation: **Prompt/Template** (`nodes/template.py`,
-      `{{input}}` substitution) and **HTTP Request** (`nodes/http_request.py`, GET/POST, http(s)-only,
-      transport errors → `HTTPRequestError`). Remaining need dedicated infra/engine work:
-      Condition/Router (branch selection in the executor), Code/Transform (sandbox), RAG/Vector
-      search (vector DB + embeddings), Loop/Map (sub-graph iteration).
-- [x] Plugin-based node registration: a single `NodeDefinition` (in `nodes/definition.py`)
-      co-locates a node's type, label, icon, ports, field specs, and handler factory next to its
-      handler; `nodes/registry.py` derives both the handler map and the UI catalog from one
-      `NODE_DEFINITIONS` list (adding a node = one module + one list entry + its `NodeType` member).
-      `nodes/catalog.py` removed.
-- [x] Workflow versioning + run a specific version. Each run snapshots the live graph into an
-      immutable `workflow_versions` row (`db/models/workflow_version.py`, per-workflow sequential
-      `version` number, deduped against the latest identical snapshot) and the execution is pinned
-      via `executions.version_id`. Runs load the graph from the pinned snapshot, not the live tables,
-      so a run is reproducible even after later edits (`ExecutionUsecase._snapshot_workflow`,
-      `_build_graph_from_snapshot`, `_load_execution_graph`). Clients can re-run a past version by
-      passing `version_id` to `POST /executions`, and list snapshots via
-      `GET /workflows/{id}/versions`. Frontend surfaces the per-workflow `v{n}` on each run in the
-      history. Known limitation: `node_executions.node_id` still FKs the live `nodes` table, so a
-      pinned rerun whose nodes were *deleted* (not edited) cannot record per-node rows — tracked in
-      DEEPENING.md.
+## Phase 4 — UX consolidation ✅ done (first pass), items below still open
 
-## Phase 4 — Product UX (parallel, 3–5 weeks)
+Done this pass:
+- [x] Merged the standalone Executions history modal into Chat mode — one place
+      to browse + interact with runs, with per-turn version/timestamp/duration and
+      a per-node result breakdown (`ChatPanel.tsx`, `OutputRenderer.tsx`).
+- [x] Consolidated Providers + Telegram Bots into one Settings modal
+      (`SettingsModal.tsx`, vertical tabs) on a shared `Modal` primitive
+      (`Modal.tsx`), replacing three separate header buttons and three
+      hand-rolled modal shells.
+- [x] Forward-compatible output rendering: `OutputRenderer` dispatches on
+      `PortType`, degrading gracefully to plain text for `file`/`list` until a
+      real node type produces them.
 
-- [ ] Undo/redo, copy-paste, multi-select, auto-layout in the editor.
-- [ ] Execution panel: active/failed node highlighting, per-node inline output, live log.
-- [ ] React Query in place of hand-rolled `useState`/`useEffect` (cache, invalidation, optimistic updates).
+Still open:
+- [ ] **Unify `InspectorPanel.tsx` and `CreateNodeDialog.tsx` field rendering.**
+      Both independently define the same `TextField`/`NumberField`/`SelectField`/
+      `ProviderField`/`ModelField`/`TelegramBotField` set and the same
+      `updateField` clear-on-hide logic. Extract one shared field-renderer
+      component/hook so a new widget type is added once, not twice.
+- [ ] **`InspectorPanel` should use the existing `useLlmProviders`/
+      `useProviderModels`/`useTelegramBots` hooks** instead of its own three
+      hand-rolled `useEffect` fetches with manual `cancelled` flags —
+      `CreateNodeDialog` already does this correctly; make `InspectorPanel` match.
+- [ ] **Migrate `CreateNodeDialog` onto the shared `Modal`** (Escape + click-outside
+      + eventual focus-trap) — it's still a standalone `fixed inset-0` div, so
+      Escape/click-outside behave inconsistently between it and `SettingsModal`.
+- [ ] Add `role="dialog"`, `aria-modal`, and a focus trap to `Modal.tsx`.
+- [ ] Confirm destructive single-click deletes: node, edge, LLM provider, Telegram
+      bot (workflow and account delete already confirm inline — reuse that pattern).
+- [ ] De-duplicate `ACTIVE_STATUSES` (`useExecutions.ts` and `ChatPanel.tsx` each
+      declare it separately).
+- [ ] Chat's live view still concatenates *every* node's streamed tokens into one
+      blob (`joinLiveTokens`) instead of streaming only the Output node's tokens;
+      auto-scroll fires on every token with no near-bottom check, so it can yank
+      the viewport during a long stream.
+- [ ] Surface run-validity (`runDisabledReason`) in Build mode too, not just Chat —
+      right now you only learn a graph can't run by switching tabs.
+- [ ] Normalize network-level fetch failures (not just HTTP error responses) to
+      `ApiError` in `lib/api.ts`'s `request()` — a dropped connection currently
+      throws a raw `TypeError` that error handlers don't expect.
+- [ ] Dismissible/auto-expiring error banner (today: one global, permanent,
+      non-dismissible banner for any error).
+- [ ] Clearing a required number field silently saves as `0` (`Number('') === 0`)
+      and passes validation — `NumberInput`/`validateFields` should treat an empty
+      required numeric field as invalid, not `0`.
+- [ ] Warn (or block) when a node references a since-deleted LLM provider/model —
+      today the dropdown just shows a blank placeholder while the dead id is
+      silently retained in the node's saved config.
+
+## Phase 5 — Security & data hardening (none of this started)
+
+- [ ] **Rate limiting** on `/auth/login` and `/auth/register` (Redis token bucket —
+      Redis is already a dependency).
+- [ ] **CORS middleware** with an explicit origin allowlist from settings.
+- [ ] **Password length bounds** on `UserCreate.password` (bcrypt silently
+      truncates past 72 bytes today).
+- [ ] **Registration doesn't leak account existence** — currently a 409 on
+      duplicate email; login is already safely generic.
+- [ ] **JWT hardening** — add `iat`/`jti` now (cheap, forward-compatible), then a
+      refresh token + revocation list; currently a single 30-minute token with no
+      way to log out server-side.
+- [ ] **Unit-of-work commits.** Every repository write commits individually
+      (`db/repositories/base.py`); `register` commits the user then the default
+      provider as two separate operations, and `create_execution` commits then
+      enqueues — a crash between steps leaves orphaned state (a providerless user;
+      a `CREATED` execution the reaper never reaps, since it only scans `RUNNING`).
+      Fix: flush-not-commit repos + one commit per usecase, and have the reaper
+      also consider stale `CREATED` rows.
+- [ ] **Timezone-aware datetime columns** (`DateTime(timezone=True)` everywhere) —
+      correctness today depends on the DB session timezone being UTC.
+- [ ] **Missing unique constraints** — `edges(workflow_id, source_node_id,
+      target_node_id)` and `llm_providers(user_id, name)` allow silent duplicates.
+- [ ] **Decouple `node_executions` from live `nodes`** so a pinned rerun of a
+      version whose nodes were since *deleted* (not edited) can still record
+      per-node results — either denormalize node identity or key on
+      `(version_id, snapshot_node_id)`.
+- [ ] **`BaseError` execution-failure path doesn't roll back the session** before
+      marking `FAILED`, unlike the generic-`Exception` branch beside it — a
+      poisoned transaction can make the failure-status commit itself throw.
+- [ ] **No global node-output size cap** — only the HTTP node truncates (10k
+      chars, silently, no marker); LLM/web_search/template/output write unbounded
+      text into `node_executions.output`.
+- [ ] **Parallel wave partial-failure surfaces one arbitrary error** and writes no
+      rows for nodes that were never reached — aggregate wave errors, write
+      `SKIPPED` rows so the UI can distinguish "failed" from "never ran".
+- [ ] **LLM streaming retries duplicate tokens to the client** — a retried attempt
+      re-streams from scratch through the same token sink with no "attempt reset"
+      marker.
+- [ ] **Stuck-execution timeout is absolute start-age, not heartbeat-based** — a
+      legitimately long multi-node run can be reaped as if it were actually stuck.
+- [ ] **Readiness probe never checks Redis and always returns 200** regardless of
+      dependency health — executions can't even enqueue without Redis.
+- [ ] **No length/size bounds** on `WorkflowCreate.name`, `ExecutionInputPayload.value`,
+      `LLMProviderCreate.name`/`config`, `UserCreate.password`.
+- [ ] **Untyped node fields skip validation entirely** — fields declared with
+      `validators={}` (LLM `system_prompt`, HTTP `headers`/`body`) get no type
+      check at save time, failing only at run time.
+- [ ] **Streaming pins a pooled DB connection for the whole SSE lifetime** — open/
+      close a short-lived session per poll iteration instead of holding the
+      request-scoped one.
+
+## Phase 6 — Node handler depth (usability, not new node types)
+
+- [ ] **"Web Search" isn't a real web search** — it only reads DuckDuckGo's
+      Instant Answer API (`AbstractText`/`RelatedTopics`), which is empty for most
+      real queries. Use the HTML/lite results endpoint or make the provider
+      configurable.
+- [ ] **HTTP node: unencoded `{{input}}` URL substitution** breaks any value with
+      spaces/`&`/`#`; response truncation at 10k chars has no marker and ignores
+      content-type. URL-encode on substitution, add a truncation marker, allow
+      `{{input}}` in headers.
+- [ ] **Template node: single exact-match `{{input}}`** — `{{ input }}` or
+      `{{INPUT}}` silently drops the entire upstream text with no error, and
+      there's no way to reference an individual parent by index.
+
+## Phase 7 — Product breadth (parallel track)
+
+- [ ] Undo/redo, copy-paste, multi-select, auto-layout in the graph editor.
+- [ ] React Query in place of hand-rolled `useState`/`useEffect` data fetching.
 - [ ] Workflow template library, JSON export/import, duplication.
 - [ ] Frontend tests (Vitest + Testing Library) — currently zero.
-
-## Phase 5 — Production readiness (cross-cutting)
-
-- [ ] Auth: refresh tokens (today a single 30-min access token), login rate limiting,
-      optional roles, logout/revocation.
-- [ ] Observability: metrics (Prometheus), error tracking (Sentry), readiness that also
-      checks Ollama/providers.
-- [ ] Multi-tenant quotas, audit log, CORS middleware (absent in `main.py`).
-- [ ] Cost observability — tokens/latency per execution.
+- [ ] Multi-tenant quotas, audit log, cost observability (tokens/latency per run).
+- [ ] Metrics (Prometheus) + error tracking (Sentry).
 
 ---
 
-### Quick wins this week
-
-Default `secret_key` fail-fast · catch all exceptions in execution · logging ·
-migrations in CI · LLM node test · fix `AGENTS.md`.
-
 ### North star
 
-From a synchronous, single-user Ollama editor → an **asynchronous, multi-provider
-orchestration platform** with typed data, streaming, and observability.
+From a synchronous, single-user Ollama editor → an asynchronous, multi-provider,
+multi-channel (chat + Telegram) orchestration platform with typed data, streaming,
+and production-grade hardening — where the UI stays declarative and scales to new
+node types and integrations without per-feature frontend rewrites.

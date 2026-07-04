@@ -109,13 +109,15 @@ export function App() {
     () => nodes.filter((node) => node.type === 'output'),
     [nodes],
   )
-  const outputPortByNodeId = useMemo(() => {
-    const map = new Map<number, PortType | null>()
+  const nodeMetaByNodeId = useMemo(() => {
+    const map = new Map<number, { type: string; label: string; portType: PortType | null }>()
     for (const node of nodes) {
-      map.set(
-        Number(node.id),
-        nodeCatalogByType[node.type ?? '']?.graph.output_port ?? null,
-      )
+      const catalogItem = nodeCatalogByType[node.type ?? '']
+      map.set(Number(node.id), {
+        type: node.type ?? 'unknown',
+        label: catalogItem?.label ?? node.type ?? 'Unknown',
+        portType: catalogItem?.graph.output_port ?? null,
+      })
     }
     return map
   }, [nodes, nodeCatalogByType])
@@ -275,7 +277,7 @@ export function App() {
             runEnabled={runEnabled}
             runDisabledReason={runDisabledReason}
             loading={loading}
-            outputPortByNodeId={outputPortByNodeId}
+            nodeMetaByNodeId={nodeMetaByNodeId}
             onRun={handleRun}
           />
         )}
