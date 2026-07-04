@@ -8,11 +8,16 @@ from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+if TYPE_CHECKING:
+    from db.models import Execution, WorkflowVersion
+
 from constants import (
+    DEFAULT_PAGE_SIZE,
     MAX_NODE_ATTEMPTS,
     NODE_TIMEOUT_SECONDS,
     RETRY_BACKOFF_BASE_SECONDS,
@@ -27,6 +32,7 @@ from db.repositories import (
     NodeExecutionRepository,
     NodeRepository,
     WorkflowRepository,
+    WorkflowVersionRepository,
 )
 from enums import ExecutionStatus, NodeType
 from exceptions import (
@@ -36,6 +42,7 @@ from exceptions import (
     ExecutionNotFoundError,
     NodeExecutionTimeoutError,
     WorkflowNotFoundError,
+    WorkflowVersionNotFoundError,
 )
 from nodes import (
     NodeExecutionContext,
@@ -52,6 +59,7 @@ from schemas import (
     ExecutionResponse,
     NodeExecutionResponse,
     NodeResponse,
+    WorkflowVersionResponse,
 )
 from streaming import subscribe_tokens
 
@@ -94,6 +102,7 @@ class ExecutionUsecase:
         self._edge_repository = EdgeRepository()
         self._node_execution_repository = NodeExecutionRepository()
         self._llm_provider_repository = LLMProviderRepository()
+        self._workflow_version_repository = WorkflowVersionRepository()
         self._node_registry = NodeHandlerRegistry(
             NodeHandlerDeps(llm_provider_repository=self._llm_provider_repository)
         )
@@ -133,13 +142,27 @@ class ExecutionUsecase:
         if not workflow:
             raise WorkflowNotFoundError
 
-        # Validate the graph up front (fail-fast); the worker rebuilds it at run time.
-        await self._load_graph(session=session, workflow_id=data.workflow_id)
+        # Pin the run to an immutable graph snapshot: either a requested past
+        # version, or a fresh snapshot of the current live graph (deduped).
+        if data.version_id is not None:
+            version = await self._workflow_version_repository.get_by(
+                session=session, id=data.version_id, workflow_id=data.workflow_id
+            )
+            if version is None:
+                raise WorkflowVersionNotFoundError
+        else:
+            version = await self._snapshot_workflow(
+                session=session, workflow_id=data.workflow_id
+            )
+
+        # Validate the snapshot up front (fail-fast); the worker reuses it at run time.
+        self._build_graph_from_snapshot(version.graph)
 
         execution = await self._execution_repository.create(
             session=session,
             data={
                 "workflow_id": data.workflow_id,
+                "version_id": version.id,
                 "input_data": data.input_data.model_dump(),
                 "status": ExecutionStatus.CREATED,
             },
@@ -190,15 +213,25 @@ class ExecutionUsecase:
         if workflow is None:
             raise WorkflowNotFoundError
 
-        await self._execution_repository.update_by(
+        claimed = await self._execution_repository.update_status_if(
             session=session,
-            id=execution_id,
-            data={"status": ExecutionStatus.RUNNING},
+            execution_id=execution_id,
+            expected_status=ExecutionStatus.CREATED,
+            data={
+                "status": ExecutionStatus.RUNNING,
+                "started_at": datetime.now(tz=UTC).replace(tzinfo=None),
+            },
         )
+        if not claimed:
+            # Already claimed or finalized (e.g. duplicate delivery); do not re-run.
+            current = await self._execution_repository.get_by(
+                session=session, id=execution_id
+            )
+            if current is None:
+                raise ExecutionNotFoundError
+            return ExecutionResponse.model_validate(current)
 
-        graph = await self._load_graph(
-            session=session, workflow_id=execution.workflow_id
-        )
+        graph = await self._load_execution_graph(session=session, execution=execution)
 
         try:
             output_data = await self._run_execution(
@@ -297,15 +330,151 @@ class ExecutionUsecase:
             ],
         )
 
+    async def _load_execution_graph(
+        self, session: AsyncSession, execution: "Execution"
+    ) -> ExecutionGraphContext:
+        """Load the graph an execution should run: its pinned snapshot if any.
+
+        Args:
+            session: The session.
+            execution: The execution ORM row.
+
+        Returns:
+            The validated graph context.
+
+        Raises:
+            ExecutionGraphValidationError: If the graph is invalid.
+
+        """
+        if execution.version_id is not None:
+            version = await self._workflow_version_repository.get_by(
+                session=session, id=execution.version_id
+            )
+            if version is not None:
+                return self._build_graph_from_snapshot(version.graph)
+
+        # No pinned version (legacy execution) or it was removed: use the live graph.
+        return await self._load_graph(
+            session=session, workflow_id=execution.workflow_id
+        )
+
+    def _build_graph_from_snapshot(
+        self, graph: dict[str, object]
+    ) -> ExecutionGraphContext:
+        """Build the graph context from a stored version snapshot.
+
+        Args:
+            graph: Snapshot dict with ``nodes`` and ``edges`` lists.
+
+        Returns:
+            The validated graph context.
+
+        Raises:
+            ExecutionGraphValidationError: If the snapshot graph is invalid.
+
+        """
+        raw_nodes = graph.get("nodes", [])
+        raw_edges = graph.get("edges", [])
+        nodes = list(raw_nodes) if isinstance(raw_nodes, list) else []
+        edges = list(raw_edges) if isinstance(raw_edges, list) else []
+        return self._build_graph_context(
+            nodes=[NodeResponse.model_validate(node) for node in nodes],
+            edges=[EdgeResponse.model_validate(edge) for edge in edges],
+        )
+
+    async def _snapshot_workflow(
+        self, session: AsyncSession, workflow_id: int
+    ) -> "WorkflowVersion":
+        """Snapshot the live graph into a version, reusing the latest if unchanged.
+
+        Args:
+            session: The session.
+            workflow_id: The workflow ID.
+
+        Returns:
+            The new or reused workflow version.
+
+        """
+        nodes = await self._node_repository.get_all(
+            session=session, workflow_id=workflow_id
+        )
+        edges = await self._edge_repository.get_all(
+            session=session, workflow_id=workflow_id
+        )
+        graph = {
+            "nodes": [
+                NodeResponse.model_validate(node).model_dump(mode="json")
+                for node in nodes
+            ],
+            "edges": [
+                EdgeResponse.model_validate(edge).model_dump(mode="json")
+                for edge in edges
+            ],
+        }
+
+        latest_versions = await self._workflow_version_repository.get_all(
+            session=session, limit=1, descending=True, workflow_id=workflow_id
+        )
+        latest = latest_versions[0] if latest_versions else None
+        if latest is not None and latest.graph == graph:
+            return latest
+
+        next_number = latest.version + 1 if latest is not None else 1
+        return await self._workflow_version_repository.create(
+            session=session,
+            data={
+                "workflow_id": workflow_id,
+                "version": next_number,
+                "graph": graph,
+            },
+        )
+
+    async def get_workflow_versions(
+        self, session: AsyncSession, workflow_id: int, user_id: int
+    ) -> list[WorkflowVersionResponse]:
+        """List a workflow's version snapshots, newest first.
+
+        Args:
+            session: The session.
+            workflow_id: The workflow ID.
+            user_id: The owner user ID.
+
+        Returns:
+            The list of version metadata.
+
+        Raises:
+            WorkflowNotFoundError: If the workflow is not found.
+
+        """
+        workflow = await self._workflow_repository.get_by(
+            session=session, id=workflow_id, owner_id=user_id
+        )
+        if not workflow:
+            raise WorkflowNotFoundError
+
+        return [
+            WorkflowVersionResponse.model_validate(version)
+            for version in await self._workflow_version_repository.get_all(
+                session=session, descending=True, workflow_id=workflow_id
+            )
+        ]
+
     async def get_executions(
-        self, session: AsyncSession, user_id: int, workflow_id: int
+        self,
+        session: AsyncSession,
+        user_id: int,
+        workflow_id: int,
+        limit: int = DEFAULT_PAGE_SIZE,
+        offset: int = 0,
     ) -> list[ExecutionResponse]:
-        """List executions for a workflow.
+        """List executions for a workflow, newest first.
 
         Args:
             session: The session.
             user_id: The owner user ID.
             workflow_id: The workflow ID.
+            limit: Maximum executions to return.
+            offset: Executions to skip (for paging).
 
         Returns:
             The list of executions.
@@ -323,7 +492,11 @@ class ExecutionUsecase:
         return [
             ExecutionResponse.model_validate(execution)
             for execution in await self._execution_repository.get_all(
-                session=session, workflow_id=workflow_id
+                session=session,
+                limit=limit,
+                offset=offset,
+                descending=True,
+                workflow_id=workflow_id,
             )
         ]
 
@@ -360,7 +533,12 @@ class ExecutionUsecase:
         return ExecutionResponse.model_validate(execution)
 
     async def get_node_executions(
-        self, session: AsyncSession, execution_id: int, user_id: int
+        self,
+        session: AsyncSession,
+        execution_id: int,
+        user_id: int,
+        limit: int = DEFAULT_PAGE_SIZE,
+        offset: int = 0,
     ) -> list[NodeExecutionResponse]:
         """List per-node results for an execution.
 
@@ -368,6 +546,8 @@ class ExecutionUsecase:
             session: The session.
             execution_id: The execution ID.
             user_id: The owner user ID.
+            limit: Maximum node results to return.
+            offset: Node results to skip (for paging).
 
         Returns:
             The list of node execution results.
@@ -384,7 +564,10 @@ class ExecutionUsecase:
         return [
             NodeExecutionResponse.model_validate(node_execution)
             for node_execution in await self._node_execution_repository.get_all(
-                session=session, execution_id=execution_id
+                session=session,
+                limit=limit,
+                offset=offset,
+                execution_id=execution_id,
             )
         ]
 
@@ -485,6 +668,7 @@ class ExecutionUsecase:
 
         """
         terminal = {ExecutionStatus.SUCCESS, ExecutionStatus.FAILED}
+        reached_terminal = False
         for _ in range(STREAM_MAX_ITERATIONS):
             session.expire_all()
             execution = await self.get_execution(
@@ -495,8 +679,14 @@ class ExecutionUsecase:
             )
             await queue.put(f"data: {frame}\n\n")
             if execution.status in terminal:
+                reached_terminal = True
                 break
             await asyncio.sleep(STREAM_POLL_SECONDS)
+
+        if not reached_terminal:
+            # Cap hit while still running: tell the client to resume polling
+            # instead of silently closing (which reads as "done").
+            await queue.put(f"data: {json.dumps({'type': 'expired'})}\n\n")
         await queue.put(None)
 
     async def _run_execution(
@@ -862,24 +1052,19 @@ class ExecutionUsecase:
         session: AsyncSession,
         execution_id: int,
         output_data: ExecutionOutputPayload,
-    ) -> ExecutionResponse:
-        """Persist successful execution result.
+    ) -> None:
+        """Persist successful execution result (only if still RUNNING).
 
         Args:
             session: Database session.
             execution_id: Execution ID.
             output_data: Final output payload.
 
-        Returns:
-            Updated execution.
-
-        Raises:
-            ExecutionNotFoundError: If execution record does not exist.
-
         """
-        updated_execution = await self._execution_repository.update_by(
+        won = await self._execution_repository.update_status_if(
             session=session,
-            id=execution_id,
+            execution_id=execution_id,
+            expected_status=ExecutionStatus.RUNNING,
             data={
                 "status": ExecutionStatus.SUCCESS,
                 "output_data": output_data.model_dump(),
@@ -887,44 +1072,41 @@ class ExecutionUsecase:
                 "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
             },
         )
-        if updated_execution is None:
-            raise ExecutionNotFoundError
-
-        return ExecutionResponse.model_validate(updated_execution)
+        if not won:
+            logger.warning(
+                "Execution %s already finalized; skipping success write",
+                execution_id,
+            )
 
     async def _mark_execution_failed(
         self,
         session: AsyncSession,
         execution_id: int,
         error: str,
-    ) -> ExecutionResponse:
-        """Persist failed execution result.
+    ) -> None:
+        """Persist failed execution result (only if still RUNNING).
 
         Args:
             session: Database session.
             execution_id: Execution ID.
             error: Failure reason.
 
-        Returns:
-            Updated execution.
-
-        Raises:
-            ExecutionNotFoundError: If execution record does not exist.
-
         """
-        updated_execution = await self._execution_repository.update_by(
+        won = await self._execution_repository.update_status_if(
             session=session,
-            id=execution_id,
+            execution_id=execution_id,
+            expected_status=ExecutionStatus.RUNNING,
             data={
                 "status": ExecutionStatus.FAILED,
                 "error": error,
                 "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
             },
         )
-        if updated_execution is None:
-            raise ExecutionNotFoundError
-
-        return ExecutionResponse.model_validate(updated_execution)
+        if not won:
+            logger.warning(
+                "Execution %s already finalized; skipping failure write",
+                execution_id,
+            )
 
     def _build_graph_context(
         self, nodes: list[NodeResponse], edges: list[EdgeResponse]
@@ -956,10 +1138,13 @@ class ExecutionUsecase:
             message = "Workflow must contain exactly one output node"
             raise ExecutionGraphValidationError(message=message)
 
-        nodes_by_id = {node.id: node for node in nodes}
-        outbound: dict[int, list[int]] = {node.id: [] for node in nodes}
-        inbound: dict[int, list[int]] = {node.id: [] for node in nodes}
-        indegree: dict[int, int] = {node.id: 0 for node in nodes}
+        # Process nodes in a stable id order so graph traversal and parent-value
+        # merging are deterministic across runs of the same workflow.
+        ordered_nodes = sorted(nodes, key=lambda node: node.id)
+        nodes_by_id = {node.id: node for node in ordered_nodes}
+        outbound: dict[int, list[int]] = {node.id: [] for node in ordered_nodes}
+        inbound: dict[int, list[int]] = {node.id: [] for node in ordered_nodes}
+        indegree: dict[int, int] = {node.id: 0 for node in ordered_nodes}
         for edge in edges:
             source_id = edge.source_node_id
             target_id = edge.target_node_id
@@ -976,6 +1161,13 @@ class ExecutionUsecase:
             outbound[source_id].append(target_id)
             inbound[target_id].append(source_id)
             indegree[target_id] += 1
+
+        # Deterministic adjacency: parent merge order and wave order no longer
+        # depend on edge-return order from the database.
+        for neighbours in outbound.values():
+            neighbours.sort()
+        for parents in inbound.values():
+            parents.sort()
 
         topological_order = self._topological_order(
             indegree=indegree, outbound=outbound

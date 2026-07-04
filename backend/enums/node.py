@@ -9,7 +9,24 @@ class NodeType(StrEnum):
     INPUT = auto()
     LLM = auto()
     WEB_SEARCH = auto()
+    TEMPLATE = auto()
+    HTTP_REQUEST = auto()
     OUTPUT = auto()
+
+
+class HttpMethod(StrEnum):
+    """HTTP methods supported by the HTTP request node."""
+
+    GET = auto()
+    POST = auto()
+    PUT = auto()
+    PATCH = auto()
+    DELETE = auto()
+
+    @property
+    def allows_body(self) -> bool:
+        """Whether this method sends a request body."""
+        return self in {HttpMethod.POST, HttpMethod.PUT, HttpMethod.PATCH}
 
 
 class PortType(StrEnum):

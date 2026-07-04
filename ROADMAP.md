@@ -97,10 +97,34 @@ Unblocks streaming, long pipelines, and scale.
 
 ## Phase 3 — Richer graph & node types (4–6 weeks)
 
-- [ ] Typed ports (text / json / file / list) instead of `str`-only; edge type-compat validation.
-- [ ] New nodes: Prompt/Template, Condition/Router, Code/Transform, HTTP Request, RAG/Vector search, Loop/Map.
-- [ ] Plugin-based node registration (today manual in 3 places: enum, `registry.py`, `catalog.py`).
-- [ ] Workflow versioning + run a specific version (today edits mutate the live graph).
+- [x] Typed ports (`PortType` = text / json / file / list) on `NodeGraphSpec`
+      (`input_port`/`output_port`); edge type-compat validated at two layers —
+      `EdgeUsecase.create_edge` (→ `EdgePortMismatchError`, HTTP 400) and
+      `ExecutionUsecase._build_graph_context` (defense in depth). Compatibility is the single
+      `ports_compatible` choke point (exact-match today; ready for a coercion table). Frontend
+      guards connections client-side via `isValidConnection` in `GraphCanvas`. All current nodes
+      are `text`, so this installs the machinery future non-text nodes need.
+- [~] New nodes — shipped on the plugin foundation: **Prompt/Template** (`nodes/template.py`,
+      `{{input}}` substitution) and **HTTP Request** (`nodes/http_request.py`, GET/POST, http(s)-only,
+      transport errors → `HTTPRequestError`). Remaining need dedicated infra/engine work:
+      Condition/Router (branch selection in the executor), Code/Transform (sandbox), RAG/Vector
+      search (vector DB + embeddings), Loop/Map (sub-graph iteration).
+- [x] Plugin-based node registration: a single `NodeDefinition` (in `nodes/definition.py`)
+      co-locates a node's type, label, icon, ports, field specs, and handler factory next to its
+      handler; `nodes/registry.py` derives both the handler map and the UI catalog from one
+      `NODE_DEFINITIONS` list (adding a node = one module + one list entry + its `NodeType` member).
+      `nodes/catalog.py` removed.
+- [x] Workflow versioning + run a specific version. Each run snapshots the live graph into an
+      immutable `workflow_versions` row (`db/models/workflow_version.py`, per-workflow sequential
+      `version` number, deduped against the latest identical snapshot) and the execution is pinned
+      via `executions.version_id`. Runs load the graph from the pinned snapshot, not the live tables,
+      so a run is reproducible even after later edits (`ExecutionUsecase._snapshot_workflow`,
+      `_build_graph_from_snapshot`, `_load_execution_graph`). Clients can re-run a past version by
+      passing `version_id` to `POST /executions`, and list snapshots via
+      `GET /workflows/{id}/versions`. Frontend surfaces the per-workflow `v{n}` on each run in the
+      history. Known limitation: `node_executions.node_id` still FKs the live `nodes` table, so a
+      pinned rerun whose nodes were *deleted* (not edited) cannot record per-node rows — tracked in
+      DEEPENING.md.
 
 ## Phase 4 — Product UX (parallel, 3–5 weeks)
 

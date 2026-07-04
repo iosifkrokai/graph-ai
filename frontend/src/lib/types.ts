@@ -53,6 +53,7 @@ export interface EdgeResponse {
 export interface Execution {
   id: number
   workflow_id: number
+  version_id: number | null
   status: ExecutionStatus
   input_data: RunInputPayload | null
   output_data: Record<string, unknown> | null
@@ -60,6 +61,13 @@ export interface Execution {
   prefect_flow_run_id: string | null
   started_at: string
   finished_at: string | null
+}
+
+export interface WorkflowVersion {
+  id: number
+  workflow_id: number
+  version: number
+  created_at: string
 }
 
 export interface TokenStreamEvent {
@@ -73,7 +81,14 @@ export interface StatusStreamEvent {
   execution: Execution
 }
 
-export type ExecutionStreamEvent = TokenStreamEvent | StatusStreamEvent
+export interface ExpiredStreamEvent {
+  type: 'expired'
+}
+
+export type ExecutionStreamEvent =
+  | TokenStreamEvent
+  | StatusStreamEvent
+  | ExpiredStreamEvent
 
 export interface UserProfile {
   id: number
@@ -105,9 +120,13 @@ export type NodeFieldWidget =
 
 export type NodeFieldDataSourceKind = 'llm_provider' | 'llm_model'
 
+export type PortType = 'text' | 'json' | 'file' | 'list'
+
 export interface NodeCatalogGraph {
   has_input: boolean
   has_output: boolean
+  input_port: PortType | null
+  output_port: PortType | null
 }
 
 export interface NodeCatalogFieldUI {

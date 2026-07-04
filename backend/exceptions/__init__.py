@@ -19,23 +19,27 @@ from exceptions.llm_provider import (
     LLMProviderNotFoundError,
     UnsupportedLLMProviderError,
 )
+from exceptions.network import BlockedURLError
 from exceptions.node import (
+    HTTPRequestError,
     NodeDataValidationError,
     NodeNotFoundError,
     WebSearchConnectionError,
 )
 from exceptions.user import UserAlreadyExistsError, UserNotFoundError
-from exceptions.workflow import WorkflowNotFoundError
+from exceptions.workflow import WorkflowNotFoundError, WorkflowVersionNotFoundError
 
 __all__ = [
     "AuthCredentialsError",
     "BaseError",
+    "BlockedURLError",
     "EdgeNodeMismatchError",
     "EdgeNotFoundError",
     "EdgePortMismatchError",
     "ExecutionGraphValidationError",
     "ExecutionInputValidationError",
     "ExecutionNotFoundError",
+    "HTTPRequestError",
     "LLMProviderConfigError",
     "LLMProviderConnectionError",
     "LLMProviderNotFoundError",
@@ -47,4 +51,5 @@ __all__ = [
     "UserNotFoundError",
     "WebSearchConnectionError",
     "WorkflowNotFoundError",
+    "WorkflowVersionNotFoundError",
 ]

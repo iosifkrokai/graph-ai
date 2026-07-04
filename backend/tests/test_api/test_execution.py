@@ -3,13 +3,18 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
-from typing import Self
+from typing import Any, Self
 
 import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from db.repositories import ExecutionRepository, NodeExecutionRepository
+from db.repositories import (
+    EdgeRepository,
+    ExecutionRepository,
+    NodeExecutionRepository,
+    NodeRepository,
+)
 from enums import ExecutionStatus, NodeType
 from exceptions import ExecutionGraphValidationError, LLMProviderConnectionError
 from schemas import ExecutionResponse
@@ -94,6 +99,75 @@ class TestExecutionCreate(BaseTestCase):
             pytest.fail("Execution output did not match expected value")
         if result.error is not None:
             pytest.fail("Execution error should be null for success")
+
+    @pytest.mark.asyncio
+    async def test_fan_in_merge_order_is_deterministic(self) -> None:
+        """Multiple parents merge in stable node-id order, not edge-insert order."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        first = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.TEMPLATE,
+            data={"label": "A", "template": "A"},
+        )
+        second = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.TEMPLATE,
+            data={"label": "B", "template": "B"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        for source, target in (
+            (input_node.id, first.id),
+            (input_node.id, second.id),
+        ):
+            await EdgeFactory.create_async(
+                session=self.session,
+                workflow_id=workflow.id,
+                source_node_id=source,
+                target_node_id=target,
+            )
+        # Insert the higher-id parent's edge first: without deterministic ordering
+        # the output would merge as "B\nA".
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=second.id,
+            target_node_id=output_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=first.id,
+            target_node_id=output_node.id,
+        )
+
+        response = await self.client.post(
+            url=self.url,
+            json={"workflow_id": workflow.id, "input_data": {"value": "x"}},
+            headers=headers,
+        )
+        data = await self.assert_response_dict(response=response)
+
+        result = await run_execution(self.session, data["id"])
+        if result.status != ExecutionStatus.SUCCESS:
+            pytest.fail("Fan-in execution should succeed")
+        if result.output_data != {"value": "A\nB"}:
+            pytest.fail(f"Parents merged in wrong order: {result.output_data}")
 
     @pytest.mark.asyncio
     async def test_ok_with_llm_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -542,6 +616,65 @@ class TestExecutionCreate(BaseTestCase):
 
         if response.status_code != HTTPStatus.BAD_REQUEST:
             pytest.fail("Expected BAD_REQUEST for cyclic workflow graph")
+
+    @pytest.mark.asyncio
+    async def test_incompatible_ports_error(self) -> None:
+        """Request fails if an edge connects incompatible node ports."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        llm_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LLM,
+            data={
+                "label": "LLM",
+                "llm_provider_id": 1,
+                "model": "test-model",
+                "system_prompt": "",
+            },
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=llm_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=llm_node.id,
+            target_node_id=output_node.id,
+        )
+        # Edge feeding into the input node, which has no input port.
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=llm_node.id,
+            target_node_id=input_node.id,
+        )
+
+        response = await self.client.post(
+            url=self.url,
+            json={"workflow_id": workflow.id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+
+        if response.status_code != HTTPStatus.BAD_REQUEST:
+            pytest.fail("Expected BAD_REQUEST for incompatible node ports")
 
     @pytest.mark.asyncio
     async def test_invalid_input_payload(self) -> None:
@@ -1060,6 +1193,44 @@ class TestExecutionReaper(BaseTestCase):
         if fresh_after is None or fresh_after.status != ExecutionStatus.RUNNING:
             pytest.fail("Recent RUNNING execution should be left untouched")
 
+    @pytest.mark.asyncio
+    async def test_status_cas_prevents_clobber(self) -> None:
+        """A finalized execution cannot be re-finalized (reaper/worker anti-clobber)."""
+        user, _ = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        execution = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            status=ExecutionStatus.RUNNING,
+        )
+        execution_id = execution.id
+        repository = ExecutionRepository()
+
+        first = await repository.update_status_if(
+            session=self.session,
+            execution_id=execution_id,
+            expected_status=ExecutionStatus.RUNNING,
+            data={"status": ExecutionStatus.SUCCESS},
+        )
+        second = await repository.update_status_if(
+            session=self.session,
+            execution_id=execution_id,
+            expected_status=ExecutionStatus.RUNNING,
+            data={"status": ExecutionStatus.FAILED},
+        )
+
+        if not first:
+            pytest.fail("First compare-and-set on RUNNING should win")
+        if second:
+            pytest.fail("Second compare-and-set should not win after finalization")
+
+        self.session.expire_all()
+        after = await repository.get_by(session=self.session, id=execution_id)
+        if after is None or after.status != ExecutionStatus.SUCCESS:
+            pytest.fail("Finalized status must not be clobbered")
+
 
 class TestExecutionParallel(BaseTestCase):
     """Tests for concurrent execution of independent graph branches."""
@@ -1224,3 +1395,252 @@ class TestExecutionStream(BaseTestCase):
 
         if response.status_code != HTTPStatus.NOT_FOUND:
             pytest.fail("Expected NOT_FOUND streaming another user's execution")
+
+
+class TestExecutionVersioning(BaseTestCase):
+    """Tests for workflow-version snapshotting on execution create/run."""
+
+    async def _create_input_output_workflow(self, user: dict) -> int:
+        """Create a minimal input -> output workflow and return its ID."""
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+        return workflow.id
+
+    async def _list_versions(
+        self, workflow_id: int, headers: dict
+    ) -> list[dict[str, Any]]:
+        """Fetch a workflow's version snapshots via the API."""
+        response = await self.client.get(
+            url=f"/workflows/{workflow_id}/versions", headers=headers
+        )
+        return await self.assert_response_list(response=response)
+
+    @pytest.mark.asyncio
+    async def test_create_pins_and_dedupes_snapshot(self) -> None:
+        """Two runs of an unchanged graph share a single deduped version."""
+        user, headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_input_output_workflow(user)
+
+        first = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "a"}},
+            headers=headers,
+        )
+        first_data = await self.assert_response_dict(response=first)
+        second = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "b"}},
+            headers=headers,
+        )
+        second_data = await self.assert_response_dict(response=second)
+
+        if first_data["version_id"] is None:
+            pytest.fail("Execution should be pinned to a version snapshot")
+        if first_data["version_id"] != second_data["version_id"]:
+            pytest.fail("Unchanged graph should dedupe to the same version")
+
+        versions = await self._list_versions(workflow_id, headers)
+        if len(versions) != 1:
+            pytest.fail("Unchanged graph should produce exactly one version")
+        if versions[0]["version"] != 1:
+            pytest.fail("First snapshot should be version number 1")
+
+    @pytest.mark.asyncio
+    async def test_graph_change_creates_new_version(self) -> None:
+        """Editing the graph between runs bumps the version number."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        direct_edge = await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+        workflow_id = workflow.id
+
+        first = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "a"}},
+            headers=headers,
+        )
+        first_data = await self.assert_response_dict(response=first)
+
+        # Rewire the live graph into input -> template -> output (still valid).
+        await EdgeRepository().delete_by(session=self.session, id=direct_edge.id)
+        template_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow_id,
+            type=NodeType.TEMPLATE,
+            data={"label": "Template", "template": "{{input}}"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow_id,
+            source_node_id=input_node.id,
+            target_node_id=template_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow_id,
+            source_node_id=template_node.id,
+            target_node_id=output_node.id,
+        )
+
+        second = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "b"}},
+            headers=headers,
+        )
+        second_data = await self.assert_response_dict(response=second)
+
+        if first_data["version_id"] == second_data["version_id"]:
+            pytest.fail("Changed graph should produce a distinct version")
+
+        versions = await self._list_versions(workflow_id, headers)
+        numbers = sorted(int(version["version"]) for version in versions)
+        if numbers != [1, 2]:
+            pytest.fail("Changed graph should produce versions numbered 1 and 2")
+
+    @pytest.mark.asyncio
+    async def test_run_pinned_version_is_reproducible(self) -> None:
+        """A pinned execution reproduces its snapshot after the live graph is edited."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        template_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.TEMPLATE,
+            data={"label": "Template", "template": "{{input}} v1"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=template_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=template_node.id,
+            target_node_id=output_node.id,
+        )
+        workflow_id = workflow.id
+
+        first = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+        first_data = await self.assert_response_dict(response=first)
+        pinned_version_id = first_data["version_id"]
+
+        # Edit the live template so a fresh run would render differently. Nodes keep
+        # their IDs, so the snapshot rerun still records node executions cleanly.
+        await NodeRepository().update_by(
+            session=self.session,
+            data={"data": {"label": "Template", "template": "{{input}} v2"}},
+            id=template_node.id,
+        )
+
+        # Re-run the original pinned version explicitly.
+        rerun = await self.client.post(
+            url="/executions",
+            json={
+                "workflow_id": workflow_id,
+                "input_data": {"value": "hello"},
+                "version_id": pinned_version_id,
+            },
+            headers=headers,
+        )
+        rerun_data = await self.assert_response_dict(response=rerun)
+        if rerun_data["version_id"] != pinned_version_id:
+            pytest.fail("Explicit version_id should pin the execution to it")
+
+        result = await run_execution(self.session, rerun_data["id"])
+        if result.status != ExecutionStatus.SUCCESS:
+            pytest.fail("Pinned version should run to success")
+        if result.output_data != {"value": "hello v1"}:
+            pytest.fail("Pinned version should reproduce the v1 snapshot output")
+
+    @pytest.mark.asyncio
+    async def test_unknown_version_id_is_rejected(self) -> None:
+        """Requesting a non-existent version_id fails fast."""
+        user, headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_input_output_workflow(user)
+
+        response = await self.client.post(
+            url="/executions",
+            json={
+                "workflow_id": workflow_id,
+                "input_data": {"value": "x"},
+                "version_id": 999_999,
+            },
+            headers=headers,
+        )
+        if response.status_code != HTTPStatus.NOT_FOUND:
+            pytest.fail("Unknown version_id should return NOT_FOUND")
+
+    @pytest.mark.asyncio
+    async def test_other_user_cannot_list_versions(self) -> None:
+        """Version listing is scoped to the workflow owner."""
+        owner, owner_headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_input_output_workflow(owner)
+        await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "a"}},
+            headers=owner_headers,
+        )
+
+        _, other_headers = await self.create_user_and_get_token()
+        response = await self.client.get(
+            url=f"/workflows/{workflow_id}/versions", headers=other_headers
+        )
+        if response.status_code != HTTPStatus.NOT_FOUND:
+            pytest.fail("Expected NOT_FOUND listing another user's versions")

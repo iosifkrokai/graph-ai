@@ -18,7 +18,14 @@ class Execution(BaseWithID):
     workflow_id: Mapped[int] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
         comment="Parent workflow ID",
+    )
+    version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("workflow_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Pinned workflow version snapshot",
     )
 
     status: Mapped[ExecutionStatus] = mapped_column(

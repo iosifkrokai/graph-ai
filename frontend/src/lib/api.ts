@@ -15,6 +15,7 @@ import type {
   TokenResponse,
   UserProfile,
   Workflow,
+  WorkflowVersion,
 } from './types'
 
 const BASE = '/api'
@@ -101,6 +102,12 @@ export async function updateWorkflow(
 
 export async function deleteWorkflow(workflowId: number): Promise<void> {
   await request(`/workflows/${workflowId}`, { method: 'DELETE' })
+}
+
+export async function getWorkflowVersions(
+  workflowId: number,
+): Promise<WorkflowVersion[]> {
+  return request<WorkflowVersion[]>(`/workflows/${workflowId}/versions`)
 }
 
 export async function getNodes(
@@ -203,8 +210,13 @@ export async function streamExecution(
       }
 
       const payload = dataLine.slice('data:'.length).trim()
-      if (payload) {
+      if (!payload) {
+        continue
+      }
+      try {
         onEvent(JSON.parse(payload) as ExecutionStreamEvent)
+      } catch {
+        // Skip a malformed frame rather than killing the whole stream.
       }
     }
   }
