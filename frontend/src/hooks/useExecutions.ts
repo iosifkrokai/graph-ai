@@ -122,6 +122,12 @@ export function useExecutions({
           }))
           return
         }
+        if (event.type === 'token_reset') {
+          // The node is retrying: drop its partial text from the failed
+          // attempt so the retry's tokens don't append after it.
+          setLiveTokens((previous) => ({ ...previous, [event.node_id]: '' }))
+          return
+        }
         if (event.type === 'expired') {
           return
         }

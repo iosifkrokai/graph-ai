@@ -1299,6 +1299,55 @@ class TestExecutionRetries(BaseTestCase):
             pytest.fail("Expected input retry (2 calls) plus output call")
 
     @pytest.mark.asyncio
+    async def test_retry_publishes_token_reset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A node retry signals clients to discard its streamed text first."""
+        calls = {"count": 0}
+
+        async def flaky(*args: object, **kwargs: object) -> NodeExecutionResult:
+            """Fail on the first call, then succeed."""
+            del args, kwargs
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise LLMProviderConnectionError(message="temporary blip")
+            return NodeExecutionResult(output="ok")
+
+        monkeypatch.setattr("nodes.registry.NodeHandlerRegistry.execute", flaky)
+        monkeypatch.setattr(
+            "usecases.execution.ExecutionUsecase._retry_delay",
+            lambda _self, attempt: 0.0 * attempt,
+        )
+
+        user, headers = await self.create_user_and_get_token()
+        workflow_id = await self._create_input_output_workflow(user)
+
+        response = await self.client.post(
+            url=self.url,
+            json={"workflow_id": workflow_id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+        created = await self.assert_response_dict(response=response)
+
+        reset_calls: list[tuple[int, int]] = []
+
+        async def token_reset_publisher(exec_id: int, node_id: int) -> None:
+            reset_calls.append((exec_id, node_id))
+
+        result = await ExecutionUsecase().run_execution(
+            session=self.session,
+            execution_id=created["id"],
+            token_reset_publisher=token_reset_publisher,
+        )
+
+        if result.status != ExecutionStatus.SUCCESS:
+            pytest.fail("Execution should succeed after a retryable failure")
+        if len(reset_calls) != 1:
+            pytest.fail(f"Expected exactly one reset signal, got {reset_calls}")
+        if reset_calls[0][0] != created["id"]:
+            pytest.fail("Reset signal carried the wrong execution ID")
+
+    @pytest.mark.asyncio
     async def test_retryable_error_fails_after_exhausting_retries(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

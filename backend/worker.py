@@ -19,7 +19,7 @@ from logging_config import configure_logging
 from schemas import ExecutionCreate, ExecutionInputPayload
 from sessions import async_session
 from settings import redis_settings
-from streaming import publish_token
+from streaming import publish_token, publish_token_reset
 from usecases import ExecutionUsecase
 from utils.encryption import decrypt
 
@@ -55,12 +55,17 @@ async def run_execution_task(ctx: dict[Any, Any], execution_id: int) -> None:
         """Publish a node token delta to the execution's stream channel."""
         await publish_token(redis, exec_id, node_id, delta)
 
+    async def token_reset_publisher(exec_id: int, node_id: int) -> None:
+        """Signal a node retry so clients discard its already-streamed text."""
+        await publish_token_reset(redis, exec_id, node_id)
+
     async with async_session() as session:
         await ExecutionUsecase().run_execution(
             session=session,
             execution_id=execution_id,
             session_factory=async_session,
             token_publisher=token_publisher,
+            token_reset_publisher=token_reset_publisher,
         )
         await _reply_via_telegram(session=session, execution_id=execution_id)
 

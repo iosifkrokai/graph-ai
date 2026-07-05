@@ -265,9 +265,14 @@ Second pass (closed out everything remaining):
 - [ ] **Parallel wave partial-failure surfaces one arbitrary error** and writes no
       rows for nodes that were never reached — aggregate wave errors, write
       `SKIPPED` rows so the UI can distinguish "failed" from "never ran".
-- [ ] **LLM streaming retries duplicate tokens to the client** — a retried attempt
-      re-streams from scratch through the same token sink with no "attempt reset"
-      marker.
+- [x] **LLM streaming retries no longer duplicate tokens to the client** — a
+      new `token_reset` signal (`streaming/tokens.py::publish_token_reset`,
+      threaded through `_NodeRunContext.token_reset_publisher`) fires right
+      before a node's retry starts, publishing on the same Redis channel as
+      token deltas. The SSE layer forwards it as a `{"type": "token_reset"}`
+      frame; the frontend (`useExecutions.ts`) clears that node's
+      `liveTokens` entry on receipt instead of letting the retry's deltas
+      append after the failed attempt's partial text.
 - [ ] **Stuck-execution timeout is absolute start-age, not heartbeat-based** — a
       legitimately long multi-node run can be reaped as if it were actually stuck.
 - [x] **Readiness probe now checks Redis and Qdrant too** (previously only

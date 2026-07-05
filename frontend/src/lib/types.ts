@@ -80,6 +80,14 @@ export interface TokenStreamEvent {
   delta: string
 }
 
+// A node is retrying: its already-streamed text should be discarded before
+// the retry's fresh deltas start arriving, so the live view doesn't show the
+// failed attempt's partial text followed by the full retried response.
+export interface TokenResetStreamEvent {
+  type: 'token_reset'
+  node_id: number
+}
+
 export interface StatusStreamEvent {
   type: 'status'
   execution: Execution
@@ -91,6 +99,7 @@ export interface ExpiredStreamEvent {
 
 export type ExecutionStreamEvent =
   | TokenStreamEvent
+  | TokenResetStreamEvent
   | StatusStreamEvent
   | ExpiredStreamEvent
 

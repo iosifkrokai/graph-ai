@@ -128,7 +128,7 @@ class TestTokenPubSub:
 
         async def consume() -> None:
             """Collect published deltas until all arrive."""
-            async for node_id, delta in subscribe_tokens(redis, _EXECUTION_ID):
+            async for node_id, delta, _reset in subscribe_tokens(redis, _EXECUTION_ID):
                 received.append((node_id, delta))
                 if len(received) == len(deltas):
                     return

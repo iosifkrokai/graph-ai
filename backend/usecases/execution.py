@@ -69,6 +69,17 @@ logger = logging.getLogger(__name__)
 
 # Publishes a (execution_id, node_id, token delta) for live streaming.
 TokenPublisher = Callable[[int, int, str], Awaitable[None]]
+# Signals (execution_id, node_id) that a node's stream is restarting (a retry)
+# and any previously streamed text for it should be discarded by the client.
+TokenResetPublisher = Callable[[int, int], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class _TokenPublishers:
+    """Bundles the token-stream callbacks so they pass through as one param."""
+
+    delta: TokenPublisher | None = None
+    reset: TokenResetPublisher | None = None
 
 
 def _truncate_for_storage(output: str | None) -> str | None:
@@ -91,6 +102,7 @@ class _NodeRunContext:
     workflow_owner_id: int
     input_value: str
     token_publisher: TokenPublisher | None = None
+    token_reset_publisher: TokenResetPublisher | None = None
 
 
 @dataclass(frozen=True)
@@ -210,6 +222,7 @@ class ExecutionUsecase:
         execution_id: int,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         token_publisher: TokenPublisher | None = None,
+        token_reset_publisher: TokenResetPublisher | None = None,
     ) -> ExecutionResponse:
         """Run a queued execution to completion (worker entry point).
 
@@ -221,6 +234,8 @@ class ExecutionUsecase:
                 run serially on ``session``.
             token_publisher: When provided, LLM nodes stream token deltas through
                 it for live client streaming.
+            token_reset_publisher: When provided, called before a node's retry
+                so clients can discard that node's already-streamed text.
 
         Returns:
             The finalized execution.
@@ -269,7 +284,9 @@ class ExecutionUsecase:
                 execution_id=execution_id,
                 graph=graph,
                 session_factory=session_factory,
-                token_publisher=token_publisher,
+                token_publishers=_TokenPublishers(
+                    delta=token_publisher, reset=token_reset_publisher
+                ),
             )
         except BaseError as exc:
             logger.warning("Execution %s failed: %s", execution_id, exc.message)
@@ -672,10 +689,13 @@ class ExecutionUsecase:
 
         """
         try:
-            async for node_id, delta in subscribe_tokens(pool, execution_id):
-                frame = json.dumps(
-                    {"type": "token", "node_id": node_id, "delta": delta}
-                )
+            async for node_id, delta, reset in subscribe_tokens(pool, execution_id):
+                if reset:
+                    frame = json.dumps({"type": "token_reset", "node_id": node_id})
+                else:
+                    frame = json.dumps(
+                        {"type": "token", "node_id": node_id, "delta": delta}
+                    )
                 await queue.put(f"data: {frame}\n\n")
         except asyncio.CancelledError:
             raise
@@ -730,7 +750,7 @@ class ExecutionUsecase:
         execution_id: int,
         graph: ExecutionGraphContext,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
-        token_publisher: TokenPublisher | None = None,
+        token_publishers: _TokenPublishers | None = None,
     ) -> ExecutionOutputPayload:
         """Execute workflow nodes for an execution and return output payload.
 
@@ -739,7 +759,9 @@ class ExecutionUsecase:
             execution_id: Execution ID.
             graph: Validated graph context.
             session_factory: When provided, independent branches run concurrently.
-            token_publisher: When provided, LLM nodes stream token deltas through it.
+            token_publishers: Callbacks for streaming token deltas and, before
+                a retry, signaling clients to discard a node's already-streamed
+                text.
 
         Returns:
             Output payload.
@@ -751,6 +773,7 @@ class ExecutionUsecase:
             ExecutionInputValidationError: If input payload is invalid.
 
         """
+        token_publishers = token_publishers or _TokenPublishers()
         execution = await self._execution_repository.get_by(
             session=session,
             id=execution_id,
@@ -769,7 +792,8 @@ class ExecutionUsecase:
             execution_id=execution_id,
             workflow_owner_id=workflow.owner_id,
             input_value=self._extract_input_value(input_data=execution.input_data),
-            token_publisher=token_publisher,
+            token_publisher=token_publishers.delta,
+            token_reset_publisher=token_publishers.reset,
         )
 
         if session_factory is None:
@@ -1092,6 +1116,13 @@ class ExecutionUsecase:
                         attempt,
                         exc.message,
                     )
+                    if run_context.token_reset_publisher is not None:
+                        # The failed attempt may have already streamed partial
+                        # tokens; tell clients to discard them before the
+                        # retry starts streaming from scratch.
+                        await run_context.token_reset_publisher(
+                            run_context.execution_id, node.id
+                        )
                     await asyncio.sleep(self._retry_delay(attempt=attempt))
                     continue
 
