@@ -283,9 +283,15 @@ Second pass (closed out everything remaining):
       chars serialized JSON, via a shared `_validate_config_size`
       field-validator), `UserCreate.password` (8-72 chars, see JWT/password
       item above).
-- [ ] **Untyped node fields skip validation entirely** — fields declared with
-      `validators={}` (LLM `system_prompt`, HTTP `headers`/`body`) get no type
-      check at save time, failing only at run time.
+- [x] **Untyped node fields now validated at save time** — new
+      `ValidatorType.JSON` (`usecases/node.py::_validate_json_field`) checks
+      HTTP node `headers` parses as JSON before the node saves, matching the
+      handler's existing run-time check; LLM `system_prompt` gained
+      `MIN_LENGTH: 0` (accepts empty, but now rejects a non-string value)
+      matching its handler's existing type check. HTTP `body` deliberately
+      left unconstrained — the handler never parses it as JSON (arbitrary
+      request bodies: XML, form data, plain text are all valid), so forcing
+      JSON there would have been a real regression, not a fix.
 - [ ] **Streaming pins a pooled DB connection for the whole SSE lifetime** — open/
       close a short-lived session per poll iteration instead of holding the
       request-scoped one.

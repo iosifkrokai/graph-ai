@@ -122,6 +122,55 @@ class TestNodeCreate(BaseTestCase):
         if response.status_code != HTTPStatus.NOT_FOUND:
             pytest.fail(f"Expected {HTTPStatus.NOT_FOUND}, got {response.status_code}")
 
+    @pytest.mark.asyncio
+    async def test_http_request_malformed_headers_rejected(self) -> None:
+        """Malformed JSON in the headers field is rejected at save time."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+
+        payload = {
+            "workflow_id": workflow.id,
+            "type": NodeType.HTTP_REQUEST,
+            "data": {
+                **build_node_data(NodeType.HTTP_REQUEST),
+                "headers": "{not valid json",
+            },
+        }
+
+        response = await self.client.post(url=self.url, json=payload, headers=headers)
+
+        expected = HTTPStatus.UNPROCESSABLE_ENTITY
+        if response.status_code != expected:
+            pytest.fail(f"Expected {expected}, got {response.status_code}")
+
+    @pytest.mark.asyncio
+    async def test_llm_non_string_system_prompt_rejected(self) -> None:
+        """A non-string system_prompt is rejected at save time."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        provider = await LLMProviderFactory.create_async(
+            session=self.session, user_id=user["id"]
+        )
+
+        payload = {
+            "workflow_id": workflow.id,
+            "type": NodeType.LLM,
+            "data": {
+                **build_node_data(NodeType.LLM, llm_provider_id=provider.id),
+                "system_prompt": 123,
+            },
+        }
+
+        response = await self.client.post(url=self.url, json=payload, headers=headers)
+
+        expected = HTTPStatus.UNPROCESSABLE_ENTITY
+        if response.status_code != expected:
+            pytest.fail(f"Expected {expected}, got {response.status_code}")
+
 
 class TestNodeList(BaseTestCase):
     """Tests for GET /nodes."""

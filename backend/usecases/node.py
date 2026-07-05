@@ -1,5 +1,6 @@
 """Node use case implementation."""
 
+import json
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,6 +98,24 @@ class NodeUsecase:
             threshold = float(validators[ValidatorType.LE.value])
             if not isinstance(value, int | float) or value > threshold:
                 errors.append(f"Field '{field.name}' must be <= {threshold}")
+
+        if ValidatorType.JSON.value in validators:
+            self._validate_json_field(field=field, value=value, errors=errors)
+
+    def _validate_json_field(
+        self,
+        *,
+        field: NodeFieldSpec,
+        value: object,
+        errors: list[str],
+    ) -> None:
+        """Append an error if a non-empty string value isn't valid JSON."""
+        if not isinstance(value, str) or not value.strip():
+            return
+        try:
+            json.loads(value)
+        except json.JSONDecodeError:
+            errors.append(f"Field '{field.name}' must be valid JSON")
 
     def _validate_node_data(
         self,

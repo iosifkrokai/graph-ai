@@ -187,7 +187,10 @@ DEFINITION = NodeDefinition(
         NodeFieldSpec(
             name="system_prompt",
             required=True,
-            validators={},
+            # min_length=0: no minimum, but still enforces the value is a
+            # string (matching the handler's own run-time type check) — an
+            # empty system prompt is allowed, a non-string one isn't.
+            validators={ValidatorType.MIN_LENGTH.value: 0},
             ui=NodeFieldUI(
                 widget=NodeFieldWidget.TEXTAREA,
                 label="System prompt",

@@ -196,7 +196,7 @@ DEFINITION = NodeDefinition(
         NodeFieldSpec(
             name="headers",
             required=False,
-            validators={},
+            validators={ValidatorType.JSON.value: True},
             ui=NodeFieldUI(
                 widget=NodeFieldWidget.TEXTAREA,
                 label="Headers (JSON)",

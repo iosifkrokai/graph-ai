@@ -10,3 +10,4 @@ class ValidatorType(StrEnum):
     SELECT = auto()
     GE = auto()
     LE = auto()
+    JSON = auto()
