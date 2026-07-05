@@ -4,6 +4,7 @@ import secrets
 import uuid
 
 import pytest
+from jose import jwt
 
 from db.repositories import LLMProviderRepository
 from enums import LLMProviderType
@@ -89,3 +90,29 @@ class TestAuthLogin(BaseTestCase):
         self.assert_has_keys(data, {"access_token", "token_type"})
         if data["token_type"] != auth_settings.token_type:
             pytest.fail("Token type did not match expected value")
+
+    @pytest.mark.asyncio
+    async def test_token_includes_iat_and_jti(self) -> None:
+        """The issued access token carries iat/jti claims."""
+        user_data = {
+            "email": f"john.doe-{uuid.uuid4().hex[:8]}@example.com",
+            "password": secrets.token_urlsafe(16),
+        }
+        await UserFactory.create_async(
+            session=self.session,
+            email=user_data["email"],
+            hashed_password=hash_password(user_data["password"]),
+        )
+
+        response = await self.client.post(
+            url=self.url,
+            json={"email": user_data["email"], "password": user_data["password"]},
+        )
+        data = await self.assert_response_dict(response=response)
+
+        payload = jwt.decode(
+            token=data["access_token"],
+            key=auth_settings.secret_key,
+            algorithms=[auth_settings.algorithm],
+        )
+        self.assert_has_keys(payload, {"exp", "iat", "jti", "sub"})

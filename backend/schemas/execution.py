@@ -11,7 +11,11 @@ from enums import ExecutionStatus
 class ExecutionInputPayload(BaseModel):
     """Input payload for workflow execution."""
 
-    value: str = Field(default=..., description="Text input value")
+    value: str = Field(
+        default=...,
+        description="Text input value",
+        max_length=50_000,
+    )
 
 
 class ExecutionCreate(BaseModel):

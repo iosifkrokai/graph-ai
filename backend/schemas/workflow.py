@@ -8,13 +8,17 @@ from pydantic import BaseModel, ConfigDict, Field
 class WorkflowCreate(BaseModel):
     """Payload for creating a workflow."""
 
-    name: str = Field(default=..., description="Workflow name")
+    name: str = Field(
+        default=..., description="Workflow name", min_length=1, max_length=200
+    )
 
 
 class WorkflowUpdate(BaseModel):
     """Payload for updating a workflow."""
 
-    name: str | None = Field(default=None, description="Workflow name")
+    name: str | None = Field(
+        default=None, description="Workflow name", min_length=1, max_length=200
+    )
 
 
 class WorkflowResponse(BaseModel):

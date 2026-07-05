@@ -229,9 +229,11 @@ Second pass (closed out everything remaining):
       wording regardless of *why* registration failed, mirroring how login
       never reveals whether the credentials failure was a bad email or a bad
       password.
-- [ ] **JWT hardening** — add `iat`/`jti` now (cheap, forward-compatible), then a
-      refresh token + revocation list; currently a single 30-minute token with no
-      way to log out server-side.
+- [x] **JWT hardening (part 1)** — access tokens now carry `iat`/`jti`
+      (`usecases/auth.py::_create_access_token`), forward-compatible
+      groundwork for a future refresh token + revocation list keyed on `jti`.
+      **Still open:** the refresh token + revocation list itself; currently
+      still a single 30-minute token with no way to log out server-side.
 - [ ] **Unit-of-work commits.** Every repository write commits individually
       (`db/repositories/base.py`); `register` commits the user then the default
       provider as two separate operations, and `create_execution` commits then
@@ -261,8 +263,13 @@ Second pass (closed out everything remaining):
       marker.
 - [ ] **Stuck-execution timeout is absolute start-age, not heartbeat-based** — a
       legitimately long multi-node run can be reaped as if it were actually stuck.
-- [ ] **Readiness probe never checks Redis and always returns 200** regardless of
-      dependency health — executions can't even enqueue without Redis.
+- [x] **Readiness probe now checks Redis and Qdrant too** (previously only
+      Postgres) **and returns 503 once any dependency is unhealthy** instead
+      of always 200 (`usecases/health.py`, `api/routers/health.py`). Redis/
+      Postgres/Qdrant clients are now dependency-injected
+      (`api/dependencies/{redis,qdrant}.py`, `db.get_session_factory`) so
+      tests can swap in fakes — matching the pattern already used for
+      `queue.get_arq_pool`.
 - [ ] **No length/size bounds** on `WorkflowCreate.name`, `ExecutionInputPayload.value`,
       `LLMProviderCreate.name`/`config`, `UserCreate.password`.
 - [ ] **Untyped node fields skip validation entirely** — fields declared with

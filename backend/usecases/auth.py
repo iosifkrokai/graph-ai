@@ -1,5 +1,6 @@
 """Auth use case implementation."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from jose import JWTError, jwt
@@ -38,15 +39,17 @@ class AuthUsecase:
 
         """
         to_encode = data.copy()
+        now = datetime.now(tz=UTC)
 
         if expires_delta:
-            expire = datetime.now(tz=UTC) + expires_delta
+            expire = now + expires_delta
         else:
-            expire = datetime.now(tz=UTC) + timedelta(
-                minutes=auth_settings.access_token_expire_minutes
-            )
+            expire = now + timedelta(minutes=auth_settings.access_token_expire_minutes)
 
-        to_encode.update({"exp": expire})
+        # `iat`/`jti` are cheap, forward-compatible groundwork for a future
+        # refresh token + revocation list — `jti` gives each token a stable
+        # identity a revocation list could key on.
+        to_encode.update({"exp": expire, "iat": now, "jti": str(uuid.uuid4())})
 
         return jwt.encode(
             claims=to_encode,
