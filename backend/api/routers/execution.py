@@ -6,7 +6,7 @@ from typing import Annotated
 from arq import ArqRedis
 from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencies import auth, db, execution, queue
 from api.dependencies.pagination import Pagination, get_pagination
@@ -93,7 +93,9 @@ async def list_node_executions(
 @router.get(path="/{execution_id}/stream")
 async def stream_execution(
     execution_id: Annotated[int, Path(gt=0)],
-    session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
+    session_factory: Annotated[
+        async_sessionmaker[AsyncSession], Depends(dependency=db.get_session_factory)
+    ],
     usecase: Annotated[
         execution.ExecutionUsecase,
         Depends(dependency=execution.get_execution_usecase),
@@ -102,14 +104,16 @@ async def stream_execution(
     pool: Annotated[ArqRedis, Depends(dependency=queue.get_arq_pool)],
 ) -> StreamingResponse:
     """Stream execution status and live LLM tokens as Server-Sent Events."""
-    # Validate ownership up front so a missing/forbidden execution returns a
-    # proper error response instead of failing mid-stream.
-    await usecase.get_execution(
-        session=session, execution_id=execution_id, user_id=current_user.id
-    )
+    # Validate ownership up front, on a short-lived session, so a missing/
+    # forbidden execution returns a proper error response instead of failing
+    # mid-stream.
+    async with session_factory() as session:
+        await usecase.get_execution(
+            session=session, execution_id=execution_id, user_id=current_user.id
+        )
     return StreamingResponse(
         usecase.stream_execution(
-            session=session,
+            session_factory=session_factory,
             execution_id=execution_id,
             user_id=current_user.id,
             pool=pool,

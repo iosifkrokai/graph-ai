@@ -604,7 +604,7 @@ class ExecutionUsecase:
 
     async def stream_execution(
         self,
-        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
         execution_id: int,
         user_id: int,
         pool: Redis,
@@ -616,7 +616,9 @@ class ExecutionUsecase:
         the queue until the execution reaches a terminal status.
 
         Args:
-            session: The session.
+            session_factory: Factory for a short-lived session per status poll,
+                rather than pinning one pooled connection for the whole stream
+                (which can run for minutes).
             execution_id: The execution ID.
             user_id: The owner user ID.
             pool: Redis connection for the token pub/sub channel.
@@ -632,7 +634,7 @@ class ExecutionUsecase:
         status_task = asyncio.create_task(
             self._pump_status(
                 queue=queue,
-                session=session,
+                session_factory=session_factory,
                 execution_id=execution_id,
                 user_id=user_id,
             )
@@ -685,7 +687,7 @@ class ExecutionUsecase:
     async def _pump_status(
         self,
         queue: asyncio.Queue[str | None],
-        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
         execution_id: int,
         user_id: int,
     ) -> None:
@@ -693,7 +695,9 @@ class ExecutionUsecase:
 
         Args:
             queue: Destination queue for SSE frames.
-            session: The session.
+            session_factory: Factory for a short-lived session per poll, so a
+                slow/long-running stream doesn't pin one pooled connection for
+                its whole duration.
             execution_id: The execution ID.
             user_id: The owner user ID.
 
@@ -701,10 +705,10 @@ class ExecutionUsecase:
         terminal = {ExecutionStatus.SUCCESS, ExecutionStatus.FAILED}
         reached_terminal = False
         for _ in range(STREAM_MAX_ITERATIONS):
-            session.expire_all()
-            execution = await self.get_execution(
-                session=session, execution_id=execution_id, user_id=user_id
-            )
+            async with session_factory() as session:
+                execution = await self.get_execution(
+                    session=session, execution_id=execution_id, user_id=user_id
+                )
             frame = json.dumps(
                 {"type": "status", "execution": execution.model_dump(mode="json")}
             )

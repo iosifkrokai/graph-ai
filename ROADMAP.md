@@ -292,9 +292,14 @@ Second pass (closed out everything remaining):
       left unconstrained — the handler never parses it as JSON (arbitrary
       request bodies: XML, form data, plain text are all valid), so forcing
       JSON there would have been a real regression, not a fix.
-- [ ] **Streaming pins a pooled DB connection for the whole SSE lifetime** — open/
-      close a short-lived session per poll iteration instead of holding the
-      request-scoped one.
+- [x] **Streaming no longer pins a pooled DB connection for the whole SSE
+      lifetime** — `_pump_status` (`usecases/execution.py`) now opens/closes
+      a short-lived session per status poll via a session factory
+      (`db.get_session_factory`, added earlier for the health check) instead
+      of holding one request-scoped session/connection for up to 15 minutes
+      (`STREAM_MAX_ITERATIONS * STREAM_POLL_SECONDS`). The stream endpoint's
+      upfront ownership check also moved onto its own short-lived session,
+      dropping the plain `db.get_session` dependency from that route entirely.
 
 ## Phase 6 — Node handler depth (usability, not new node types)
 
