@@ -14,7 +14,12 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Payload for creating a user."""
 
-    password: str = Field(default=..., description="Password of the user")
+    password: str = Field(
+        default=...,
+        description="Password of the user",
+        min_length=8,
+        max_length=72,
+    )
 
 
 class UserResponse(UserBase):

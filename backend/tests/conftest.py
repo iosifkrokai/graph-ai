@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from testcontainers.postgres import PostgresContainer
 
-from api.dependencies import db, queue
+from api.dependencies import db, qdrant, queue, rate_limit
+from api.dependencies import redis as redis_dependency
 from db.models import Base
 from main import app
 from settings import postgres_settings
@@ -24,6 +25,22 @@ class _NoopArqPool:
     async def enqueue_job(self, *args: object, **kwargs: object) -> None:
         """Accept and ignore an enqueue call."""
         del args, kwargs
+
+
+class _NoopRedisClient:
+    """Stand-in Redis client so tests need no real Redis for health checks."""
+
+    async def ping(self) -> bool:
+        """Report healthy without a real connection."""
+        return True
+
+
+class _NoopQdrantClient:
+    """Stand-in Qdrant client so tests need no real Qdrant for health checks."""
+
+    async def get_collections(self) -> None:
+        """Report healthy without a real connection."""
+        return
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -66,19 +83,48 @@ async def test_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession,
 
 
 @pytest_asyncio.fixture(scope="function")
-async def test_client(test_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+async def test_client(
+    test_session: AsyncSession, test_engine: AsyncEngine
+) -> AsyncGenerator[AsyncClient, None]:
     """Provide an HTTP client with the test session injected."""
 
     def override_get_session() -> AsyncSession:
         """Return the test session for dependency overrides."""
         return test_session
 
+    def override_get_session_factory() -> async_sessionmaker[AsyncSession]:
+        """Return a session factory bound to the test engine."""
+        return async_sessionmaker(
+            test_engine, class_=AsyncSession, expire_on_commit=False
+        )
+
     def override_get_arq_pool() -> _NoopArqPool:
         """Return a no-op ARQ pool so tests need no Redis."""
         return _NoopArqPool()
 
+    def override_get_redis_client() -> _NoopRedisClient:
+        """Return a no-op Redis client so tests need no real Redis."""
+        return _NoopRedisClient()
+
+    def override_get_qdrant_client() -> _NoopQdrantClient:
+        """Return a no-op Qdrant client so tests need no real Qdrant."""
+        return _NoopQdrantClient()
+
+    async def override_rate_limit() -> None:
+        """Bypass rate limiting so repeated test requests never 429."""
+        return
+
     app.dependency_overrides[db.get_session] = override_get_session
+    app.dependency_overrides[db.get_session_factory] = override_get_session_factory
     app.dependency_overrides[queue.get_arq_pool] = override_get_arq_pool
+    app.dependency_overrides[redis_dependency.get_redis_client] = (
+        override_get_redis_client
+    )
+    app.dependency_overrides[qdrant.get_qdrant_client] = override_get_qdrant_client
+    app.dependency_overrides[rate_limit.enforce_login_rate_limit] = override_rate_limit
+    app.dependency_overrides[rate_limit.enforce_register_rate_limit] = (
+        override_rate_limit
+    )
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"

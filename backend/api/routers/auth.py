@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import auth, db
+from api.dependencies import auth, db, rate_limit
 from schemas import LoginCreate, LoginResponse, UserCreate, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -16,6 +16,9 @@ async def login(
     data: Annotated[LoginCreate, Body(description="Data for login")],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
     usecase: Annotated[auth.AuthUsecase, Depends(dependency=auth.get_auth_usecase)],
+    _rate_limit: Annotated[
+        None, Depends(dependency=rate_limit.enforce_login_rate_limit)
+    ],
 ) -> LoginResponse:
     """Authenticate a user and return a token."""
     return await usecase.login(session=session, data=data)
@@ -26,6 +29,9 @@ async def register(
     data: Annotated[UserCreate, Body(description="Data for register")],
     session: Annotated[AsyncSession, Depends(dependency=db.get_session)],
     usecase: Annotated[auth.AuthUsecase, Depends(dependency=auth.get_auth_usecase)],
+    _rate_limit: Annotated[
+        None, Depends(dependency=rate_limit.enforce_register_rate_limit)
+    ],
 ) -> UserResponse:
     """Register a new user."""
     return await usecase.register(session=session, data=data)

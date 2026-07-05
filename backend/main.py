@@ -5,7 +5,9 @@ from contextlib import asynccontextmanager
 
 from arq import create_pool
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
 
 from api.routers import (
     auth,
@@ -20,14 +22,14 @@ from api.routers import (
 )
 from exceptions import BaseError
 from logging_config import configure_logging
-from settings import redis_settings
+from settings import cors_settings, redis_settings
 
 configure_logging()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Manage the ARQ Redis pool lifecycle.
+    """Manage the ARQ Redis pool and shared Redis client lifecycle.
 
     Args:
         app: The FastAPI application.
@@ -37,13 +39,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     """
     app.state.arq_pool = await create_pool(redis_settings.arq)
+    app.state.redis_client = Redis(
+        host=redis_settings.host,
+        port=redis_settings.port,
+        db=redis_settings.db,
+    )
     try:
         yield
     finally:
         await app.state.arq_pool.aclose()
+        await app.state.redis_client.aclose()
 
 
 app = FastAPI(title="Graph AI Backend", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,  # ty: ignore[invalid-argument-type]
+    allow_origins=cors_settings.origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(exc_class_or_status_code=BaseError)

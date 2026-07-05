@@ -208,15 +208,27 @@ Second pass (closed out everything remaining):
       race-free) and shows "no longer exists"/"no longer available" instead
       of just a blank dropdown with the dead id silently retained.
 
-## Phase 5 — Security & data hardening (none of this started)
+## Phase 5 — Security & data hardening (in progress)
 
-- [ ] **Rate limiting** on `/auth/login` and `/auth/register` (Redis token bucket —
-      Redis is already a dependency).
-- [ ] **CORS middleware** with an explicit origin allowlist from settings.
-- [ ] **Password length bounds** on `UserCreate.password` (bcrypt silently
-      truncates past 72 bytes today).
-- [ ] **Registration doesn't leak account existence** — currently a 409 on
-      duplicate email; login is already safely generic.
+- [x] **Rate limiting** on `/auth/login` and `/auth/register` — a fixed-window
+      Redis counter (`api/dependencies/rate_limit.py`, `INCR`+`EXPIRE` per
+      client IP) rejects with 429 past 10 login / 5 register attempts per
+      60s. Reuses a new shared `redis.asyncio.Redis` client on `app.state`
+      (separate from the ARQ pool) set up in `main.py`'s lifespan. Tests
+      override the two `enforce_*_rate_limit` dependencies with a no-op by
+      default (`tests/conftest.py`); a dedicated `test_rate_limit.py` spins up
+      a real Redis container to verify the 429 actually fires.
+- [x] **CORS middleware** with an explicit origin allowlist from settings
+      (`settings/cors.py`, `CORS_ALLOWED_ORIGINS` — comma-separated, default
+      `http://localhost:3000`), wired via `CORSMiddleware` in `main.py`.
+      `allow_credentials=False` since auth is Bearer-token, not cookie-based.
+- [x] **Password length bounds** on `UserCreate.password` — `min_length=8`,
+      `max_length=72` (bcrypt silently truncates past 72 bytes).
+- [x] **Registration doesn't leak account existence** — `UserAlreadyExistsError`'s
+      message no longer says "already exists"; it's now the same generic
+      wording regardless of *why* registration failed, mirroring how login
+      never reveals whether the credentials failure was a bad email or a bad
+      password.
 - [ ] **JWT hardening** — add `iat`/`jti` now (cheap, forward-compatible), then a
       refresh token + revocation list; currently a single 30-minute token with no
       way to log out server-side.
