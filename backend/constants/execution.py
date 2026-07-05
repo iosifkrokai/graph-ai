@@ -14,3 +14,8 @@ STREAM_MAX_ITERATIONS = 900
 # Pagination defaults for growing list endpoints (executions, node results).
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100
+
+# Cap on a single node's persisted `node_executions.output` (storage only —
+# does not affect the in-memory value fed to downstream nodes), so a giant
+# scraped page or LLM response can't grow that table unbounded.
+MAX_NODE_OUTPUT_CHARS = 50_000

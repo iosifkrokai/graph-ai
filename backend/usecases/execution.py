@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 from constants import (
     DEFAULT_PAGE_SIZE,
     MAX_NODE_ATTEMPTS,
+    MAX_NODE_OUTPUT_CHARS,
     NODE_TIMEOUT_SECONDS,
     RETRY_BACKOFF_BASE_SECONDS,
     STREAM_MAX_ITERATIONS,
@@ -68,6 +69,18 @@ logger = logging.getLogger(__name__)
 
 # Publishes a (execution_id, node_id, token delta) for live streaming.
 TokenPublisher = Callable[[int, int, str], Awaitable[None]]
+
+
+def _truncate_for_storage(output: str | None) -> str | None:
+    """Cap a node's output before persisting it, with a visible marker.
+
+    Bounds `node_executions.output` storage (e.g. against a giant scraped
+    page or LLM response) without touching the in-memory value fed to
+    downstream nodes — only what's recorded for display/debugging.
+    """
+    if output is None or len(output) <= MAX_NODE_OUTPUT_CHARS:
+        return output
+    return f"{output[:MAX_NODE_OUTPUT_CHARS]}\n\n[truncated: {len(output)} chars total]"
 
 
 @dataclass(frozen=True)
@@ -1196,7 +1209,7 @@ class ExecutionUsecase:
                 "execution_id": run_context.execution_id,
                 "node_id": node_id,
                 "status": outcome.status,
-                "output": outcome.output,
+                "output": _truncate_for_storage(outcome.output),
                 "error": outcome.error,
                 "started_at": started_at,
                 "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),

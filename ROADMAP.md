@@ -29,19 +29,14 @@ against the actual code as of this writing (not carried forward from stale notes
 
 ## Key limitations driving priorities
 
-1. **No rate limiting anywhere** — login/register are guessable/DoS-able.
-2. **No CORS middleware** — the shipped SPA can't be served from a different origin
-   without the usual unsafe `allow_origins=["*"]` workaround.
-3. **Multi-step operations aren't atomic** — a crash between two commits (e.g.
+1. **Multi-step operations aren't atomic** — a crash between two commits (e.g.
    register's user+provider, or execution create-then-enqueue) leaves orphaned state
    that nothing reaps.
-4. **No global node-output size cap**, and per-attempt LLM streaming duplicates
-   tokens to the client on retry.
-5. **No frontend tests**, no undo/redo/multi-select, no React Query — all data
+2. **Per-attempt LLM streaming duplicates tokens to the client on retry.**
+3. **No frontend tests**, no undo/redo/multi-select, no React Query — all data
    fetching is hand-rolled `useState`/`useEffect`.
-6. **Timezone-less datetime columns**, missing unique constraints on `edges`/
-   `llm_providers`, and pinned reruns can't record per-node results for nodes that
-   were since deleted.
+4. **Timezone-less datetime columns**, and pinned reruns can't record
+   per-node results for nodes that were since deleted.
 
 ---
 
@@ -258,9 +253,15 @@ Second pass (closed out everything remaining):
       marking `FAILED`, matching the generic-`Exception` branch beside it
       (`usecases/execution.py::run_execution`) — a poisoned transaction can
       no longer make the failure-status commit itself throw.
-- [ ] **No global node-output size cap** — only the HTTP node truncates (10k
-      chars, silently, no marker); LLM/web_search/template/output write unbounded
-      text into `node_executions.output`.
+- [x] **Global node-output size cap** — `_truncate_for_storage`
+      (`usecases/execution.py`, `MAX_NODE_OUTPUT_CHARS = 50_000` in
+      `constants/execution.py`) caps every node's persisted
+      `node_executions.output` with a visible `[truncated: N chars total]`
+      marker, applied uniformly regardless of node type. Deliberately scoped
+      to storage only — the in-memory value handed to downstream nodes (and
+      the final `executions.output_data` the user actually sees) stays
+      full-fidelity; HTTP node's separate 10k pipeline-level truncation is
+      unrelated and untouched.
 - [ ] **Parallel wave partial-failure surfaces one arbitrary error** and writes no
       rows for nodes that were never reached — aggregate wave errors, write
       `SKIPPED` rows so the UI can distinguish "failed" from "never ran".

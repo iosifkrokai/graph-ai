@@ -1016,6 +1016,69 @@ class TestNodeExecutionList(BaseTestCase):
         if response.status_code != HTTPStatus.NOT_FOUND:
             pytest.fail("Expected NOT_FOUND when reading another user's node results")
 
+    @pytest.mark.asyncio
+    async def test_oversized_node_output_truncated_in_storage(self) -> None:
+        """A node's persisted output is capped, but the final answer isn't."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        code_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.CODE_TRANSFORM,
+            data={"label": "Code", "code": "output = input * 60000"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=code_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=code_node.id,
+            target_node_id=output_node.id,
+        )
+
+        run_response = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow.id, "input_data": {"value": "x"}},
+            headers=headers,
+        )
+        execution = await self.assert_response_dict(response=run_response)
+        result = await run_execution(self.session, execution["id"])
+
+        # The full, untruncated answer still reaches the final execution output.
+        full_length = 60000
+        if not result.output_data or len(result.output_data["value"]) != full_length:
+            pytest.fail("Final execution output must not be truncated")
+
+        response = await self.client.get(
+            url=f"/executions/{execution['id']}/nodes", headers=headers
+        )
+        data = await self.assert_response_list(response=response)
+        code_result = next(item for item in data if item["node_id"] == code_node.id)
+
+        max_stored_chars = 50_000
+        if len(code_result["output"]) > max_stored_chars + 100:
+            pytest.fail("Persisted node output should be capped")
+        if "truncated" not in code_result["output"]:
+            pytest.fail("Truncated output should carry a visible marker")
+
 
 class TestExecutionCondition(BaseTestCase):
     """Tests for Condition/Router branching and skip propagation."""
