@@ -2,6 +2,7 @@
 
 import secrets
 import uuid
+from http import HTTPStatus
 
 import pytest
 from jose import jwt
@@ -61,6 +62,32 @@ class TestAuthRegister(BaseTestCase):
             pytest.fail("Expected default provider type to be OLLAMA")
         if provider.name != "ollama":
             pytest.fail("Expected default provider name to be 'ollama'")
+
+    @pytest.mark.asyncio
+    async def test_short_password_rejected(self) -> None:
+        """A password under 8 characters is rejected."""
+        payload = {
+            "email": f"john.doe-{uuid.uuid4().hex[:8]}@example.com",
+            "password": "short1",
+        }
+
+        response = await self.client.post(url=self.url, json=payload)
+
+        if response.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+            pytest.fail(f"Expected a validation error, got {response.status_code}")
+
+    @pytest.mark.asyncio
+    async def test_long_password_rejected(self) -> None:
+        """A password over 72 characters is rejected."""
+        payload = {
+            "email": f"john.doe-{uuid.uuid4().hex[:8]}@example.com",
+            "password": "x" * 73,
+        }
+
+        response = await self.client.post(url=self.url, json=payload)
+
+        if response.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+            pytest.fail(f"Expected a validation error, got {response.status_code}")
 
 
 class TestAuthLogin(BaseTestCase):

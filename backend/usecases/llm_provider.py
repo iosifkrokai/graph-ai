@@ -1,9 +1,14 @@
 """LLM provider use case implementation."""
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.repositories import LLMProviderRepository
-from exceptions import BlockedURLError, LLMProviderNotFoundError
+from exceptions import (
+    BlockedURLError,
+    LLMProviderAlreadyExistsError,
+    LLMProviderNotFoundError,
+)
 from llm import create_llm_client
 from schemas import (
     LLMProviderCreate,
@@ -57,18 +62,26 @@ class LLMProviderUsecase:
         Returns:
             The created LLM provider.
 
+        Raises:
+            LLMProviderAlreadyExistsError: If the user already has a provider
+                with this name.
+
         """
         payload = data.model_dump(mode="json")
         await _ensure_allowed_base_url(payload["base_url"])
         if payload.get("api_key") is not None:
             payload["api_key"] = encrypt(payload["api_key"])
 
-        return LLMProviderResponse.model_validate(
-            await self._llm_provider_repository.create(
+        try:
+            created = await self._llm_provider_repository.create(
                 session=session,
                 data={**payload, "user_id": user_id},
             )
-        )
+        except IntegrityError as exc:
+            await session.rollback()
+            raise LLMProviderAlreadyExistsError from exc
+
+        return LLMProviderResponse.model_validate(created)
 
     async def get_llm_providers(
         self, session: AsyncSession, user_id: int
@@ -136,6 +149,8 @@ class LLMProviderUsecase:
 
         Raises:
             LLMProviderNotFoundError: If the LLM provider is not found.
+            LLMProviderAlreadyExistsError: If the user already has a provider
+                with this name.
 
         """
         llm_provider = await self.get_llm_provider(
@@ -152,9 +167,13 @@ class LLMProviderUsecase:
         if "api_key" in update_data:
             update_data["api_key"] = encrypt(update_data["api_key"])
 
-        llm_provider = await self._llm_provider_repository.update_by(
-            session=session, data=update_data, id=provider_id
-        )
+        try:
+            llm_provider = await self._llm_provider_repository.update_by(
+                session=session, data=update_data, id=provider_id
+            )
+        except IntegrityError as exc:
+            await session.rollback()
+            raise LLMProviderAlreadyExistsError from exc
         if not llm_provider:
             raise LLMProviderNotFoundError
 

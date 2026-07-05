@@ -102,6 +102,26 @@ class TestExecutionCreate(BaseTestCase):
             pytest.fail("Execution error should be null for success")
 
     @pytest.mark.asyncio
+    async def test_oversized_input_rejected(self) -> None:
+        """Input text over the length cap is rejected with a validation error."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+
+        response = await self.client.post(
+            url=self.url,
+            json={
+                "workflow_id": workflow.id,
+                "input_data": {"value": "x" * 50_001},
+            },
+            headers=headers,
+        )
+
+        if response.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+            pytest.fail(f"Expected a validation error, got {response.status_code}")
+
+    @pytest.mark.asyncio
     async def test_fan_in_merge_order_is_deterministic(self) -> None:
         """Multiple parents merge in stable node-id order, not edge-insert order."""
         user, headers = await self.create_user_and_get_token()
@@ -949,6 +969,11 @@ class TestNodeExecutionList(BaseTestCase):
             target_node_id=output_node.id,
         )
 
+        # Captured before run_execution: a BaseError failure rolls back the
+        # shared test session, which expires already-loaded ORM objects like
+        # llm_node, so its attributes must be read before that point.
+        llm_node_id = llm_node.id
+
         run_response = await self.client.post(
             url="/executions",
             json={"workflow_id": workflow.id, "input_data": {"value": "hello"}},
@@ -965,7 +990,7 @@ class TestNodeExecutionList(BaseTestCase):
         failed = [item for item in data if item["status"] == ExecutionStatus.FAILED]
         if len(failed) != 1:
             pytest.fail("Expected exactly one FAILED node execution")
-        if failed[0]["node_id"] != llm_node.id:
+        if failed[0]["node_id"] != llm_node_id:
             pytest.fail("Expected the LLM node to be the failing node")
         if not failed[0]["error"]:
             pytest.fail("Expected error details on the failed node execution")

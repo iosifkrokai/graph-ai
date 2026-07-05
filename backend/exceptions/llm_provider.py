@@ -53,3 +53,15 @@ class UnsupportedLLMProviderError(BaseError):
     ) -> None:
         """Initialize the error."""
         super().__init__(message=message, status_code=status_code)
+
+
+class LLMProviderAlreadyExistsError(BaseError):
+    """Raised when a provider with the same name already exists for this user."""
+
+    def __init__(
+        self,
+        message: str = "A provider with this name already exists",
+        status_code: HTTPStatus = HTTPStatus.CONFLICT,
+    ) -> None:
+        """Initialize the error."""
+        super().__init__(message=message, status_code=status_code)

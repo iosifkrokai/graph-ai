@@ -51,3 +51,15 @@ class EdgeHandleMismatchError(BaseError):
     ) -> None:
         """Initialize the error."""
         super().__init__(message=message, status_code=status_code)
+
+
+class EdgeAlreadyExistsError(BaseError):
+    """Raised when an identical edge already exists in the workflow."""
+
+    def __init__(
+        self,
+        message: str = "An edge between these nodes already exists",
+        status_code: HTTPStatus = HTTPStatus.CONFLICT,
+    ) -> None:
+        """Initialize the error."""
+        super().__init__(message=message, status_code=status_code)

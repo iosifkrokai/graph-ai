@@ -260,6 +260,7 @@ class ExecutionUsecase:
             )
         except BaseError as exc:
             logger.warning("Execution %s failed: %s", execution_id, exc.message)
+            await session.rollback()
             await self._mark_execution_failed(
                 session=session, execution_id=execution_id, error=exc.message
             )

@@ -83,6 +83,43 @@ class TestEdgeCreate(BaseTestCase):
                 f"Expected 400 for incompatible ports, got {response.status_code}"
             )
 
+    @pytest.mark.asyncio
+    async def test_duplicate_edge_rejected(self) -> None:
+        """Creating an identical edge twice returns 409."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        source = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+        )
+        target = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+        )
+        payload = {
+            "workflow_id": workflow.id,
+            "source_node_id": source.id,
+            "target_node_id": target.id,
+        }
+
+        first_response = await self.client.post(
+            url=self.url, json=payload, headers=headers
+        )
+        await self.assert_response_dict(response=first_response)
+
+        second_response = await self.client.post(
+            url=self.url, json=payload, headers=headers
+        )
+
+        if second_response.status_code != HTTPStatus.CONFLICT:
+            pytest.fail(
+                f"Expected 409 for a duplicate edge, got {second_response.status_code}"
+            )
+
 
 class TestEdgeList(BaseTestCase):
     """Tests for GET /edges."""

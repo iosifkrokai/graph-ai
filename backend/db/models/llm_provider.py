@@ -1,6 +1,6 @@
 """LLM provider model."""
 
-from sqlalchemy import Enum, ForeignKey, String, Text
+from sqlalchemy import Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,6 +12,9 @@ class LLMProvider(BaseWithID):
     """LLM provider configuration."""
 
     __tablename__ = "llm_providers"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_llm_providers_user_name"),
+    )
 
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),

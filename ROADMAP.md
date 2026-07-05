@@ -243,15 +243,21 @@ Second pass (closed out everything remaining):
       also consider stale `CREATED` rows.
 - [ ] **Timezone-aware datetime columns** (`DateTime(timezone=True)` everywhere) —
       correctness today depends on the DB session timezone being UTC.
-- [ ] **Missing unique constraints** — `edges(workflow_id, source_node_id,
-      target_node_id)` and `llm_providers(user_id, name)` allow silent duplicates.
+- [x] **Added missing unique constraints** — `edges(workflow_id,
+      source_node_id, target_node_id)` and `llm_providers(user_id, name)` no
+      longer allow silent duplicates. New domain errors
+      (`EdgeAlreadyExistsError`, `LLMProviderAlreadyExistsError`, both 409)
+      wrap the underlying `IntegrityError` at the usecase layer (with a
+      `session.rollback()` first, same lesson as the `BaseError` rollback
+      fix above) so the API returns a clean 409 instead of a raw 500.
 - [ ] **Decouple `node_executions` from live `nodes`** so a pinned rerun of a
       version whose nodes were since *deleted* (not edited) can still record
       per-node results — either denormalize node identity or key on
       `(version_id, snapshot_node_id)`.
-- [ ] **`BaseError` execution-failure path doesn't roll back the session** before
-      marking `FAILED`, unlike the generic-`Exception` branch beside it — a
-      poisoned transaction can make the failure-status commit itself throw.
+- [x] **`BaseError` execution-failure path now rolls back the session** before
+      marking `FAILED`, matching the generic-`Exception` branch beside it
+      (`usecases/execution.py::run_execution`) — a poisoned transaction can
+      no longer make the failure-status commit itself throw.
 - [ ] **No global node-output size cap** — only the HTTP node truncates (10k
       chars, silently, no marker); LLM/web_search/template/output write unbounded
       text into `node_executions.output`.
@@ -270,8 +276,12 @@ Second pass (closed out everything remaining):
       (`api/dependencies/{redis,qdrant}.py`, `db.get_session_factory`) so
       tests can swap in fakes — matching the pattern already used for
       `queue.get_arq_pool`.
-- [ ] **No length/size bounds** on `WorkflowCreate.name`, `ExecutionInputPayload.value`,
-      `LLMProviderCreate.name`/`config`, `UserCreate.password`.
+- [x] **Length/size bounds added**: `WorkflowCreate`/`WorkflowUpdate.name`
+      (1-200 chars), `ExecutionInputPayload.value` (50k chars),
+      `LLMProviderCreate`/`Update.name` (1-200 chars) and `.config` (10k
+      chars serialized JSON, via a shared `_validate_config_size`
+      field-validator), `UserCreate.password` (8-72 chars, see JWT/password
+      item above).
 - [ ] **Untyped node fields skip validation entirely** — fields declared with
       `validators={}` (LLM `system_prompt`, HTTP `headers`/`body`) get no type
       check at save time, failing only at run time.

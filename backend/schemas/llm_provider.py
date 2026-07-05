@@ -1,8 +1,30 @@
 """Schemas for LLM provider API payloads."""
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
+import json
+
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from enums import LLMProviderType
+
+# Bounds the serialized size of the free-form `config` dict, not its shape.
+_MAX_CONFIG_JSON_LENGTH = 10_000
+
+
+def _validate_config_size(config: dict) -> dict:
+    """Reject a config dict whose JSON serialization is too large."""
+    if len(json.dumps(config)) > _MAX_CONFIG_JSON_LENGTH:
+        message = (
+            f"config must serialize to at most {_MAX_CONFIG_JSON_LENGTH} characters"
+        )
+        raise ValueError(message)
+    return config
 
 
 class ChatMessage(BaseModel):
@@ -44,7 +66,9 @@ class GenerationParams(BaseModel):
 class LLMProviderCreate(BaseModel):
     """Payload for creating an LLM provider."""
 
-    name: str = Field(default=..., description="Provider name")
+    name: str = Field(
+        default=..., description="Provider name", min_length=1, max_length=200
+    )
     type: LLMProviderType = Field(default=..., description="Provider type")
     config: dict = Field(default_factory=dict, description="Provider configuration")
     api_key: str | None = Field(
@@ -52,11 +76,19 @@ class LLMProviderCreate(BaseModel):
     )
     base_url: AnyHttpUrl = Field(default=..., description="Custom base URL")
 
+    @field_validator("config")
+    @classmethod
+    def _validate_config_size(cls, config: dict) -> dict:
+        """Reject a config dict whose JSON serialization is too large."""
+        return _validate_config_size(config)
+
 
 class LLMProviderUpdate(BaseModel):
     """Payload for updating an LLM provider."""
 
-    name: str | None = Field(default=None, description="Provider name")
+    name: str | None = Field(
+        default=None, description="Provider name", min_length=1, max_length=200
+    )
     type: LLMProviderType | None = Field(default=None, description="Provider type")
     config: dict | None = Field(default=None, description="Provider configuration")
     api_key: str | None = Field(
@@ -70,6 +102,14 @@ class LLMProviderUpdate(BaseModel):
         if "base_url" in self.model_fields_set and self.base_url is None:
             raise ValueError
         return self
+
+    @field_validator("config")
+    @classmethod
+    def _validate_config_size_optional(cls, config: dict | None) -> dict | None:
+        """Reject a config dict whose JSON serialization is too large."""
+        if config is None:
+            return None
+        return _validate_config_size(config)
 
 
 class LLMProviderResponse(BaseModel):

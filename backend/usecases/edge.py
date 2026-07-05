@@ -1,11 +1,13 @@
 """Edge use case implementation."""
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Node
 from db.repositories import EdgeRepository, NodeRepository, WorkflowRepository
 from enums import NodeType
 from exceptions import (
+    EdgeAlreadyExistsError,
     EdgeHandleMismatchError,
     EdgeNodeMismatchError,
     EdgeNotFoundError,
@@ -80,6 +82,7 @@ class EdgeUsecase:
             NodeNotFoundError: If the source or target node is not found.
             EdgeNodeMismatchError: If the nodes do not belong to the workflow.
             EdgePortMismatchError: If the source/target ports are incompatible.
+            EdgeAlreadyExistsError: If an identical edge already exists.
 
         """
         workflow = await self._workflow_repository.get_by(
@@ -113,9 +116,15 @@ class EdgeUsecase:
 
         self._validate_source_handle(source_node, data.source_handle)
 
-        return EdgeResponse.model_validate(
-            await self._edge_repository.create(session=session, data=data.model_dump())
-        )
+        try:
+            created = await self._edge_repository.create(
+                session=session, data=data.model_dump()
+            )
+        except IntegrityError as exc:
+            await session.rollback()
+            raise EdgeAlreadyExistsError from exc
+
+        return EdgeResponse.model_validate(created)
 
     async def get_edges(
         self, session: AsyncSession, user_id: int, workflow_id: int
@@ -196,6 +205,7 @@ class EdgeUsecase:
         Raises:
             EdgeNotFoundError: If the edge is not found.
             WorkflowNotFoundError: If the workflow is not found.
+            EdgeAlreadyExistsError: If an identical edge already exists.
 
         """
         edge = await self.get_edge(session=session, edge_id=edge_id, user_id=user_id)
@@ -234,11 +244,15 @@ class EdgeUsecase:
         source_handle = update_data.get("source_handle", edge.source_handle)
         self._validate_source_handle(source_node, source_handle)
 
-        edge = await self._edge_repository.update_by(
-            session=session,
-            data=update_data,
-            id=edge_id,
-        )
+        try:
+            edge = await self._edge_repository.update_by(
+                session=session,
+                data=update_data,
+                id=edge_id,
+            )
+        except IntegrityError as exc:
+            await session.rollback()
+            raise EdgeAlreadyExistsError from exc
         if not edge:
             raise EdgeNotFoundError
 

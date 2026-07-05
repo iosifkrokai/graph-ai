@@ -1,6 +1,7 @@
 """Workflow API tests."""
 
 import uuid
+from http import HTTPStatus
 
 import pytest
 
@@ -30,6 +31,30 @@ class TestWorkflowCreate(BaseTestCase):
             pytest.fail("Workflow name did not match request")
         if data["owner_id"] != user["id"]:
             pytest.fail("Workflow owner did not match current user")
+
+    @pytest.mark.asyncio
+    async def test_empty_name_rejected(self) -> None:
+        """An empty name is rejected with a validation error."""
+        _, headers = await self.create_user_and_get_token()
+
+        response = await self.client.post(
+            url=self.url, json={"name": ""}, headers=headers
+        )
+
+        if response.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+            pytest.fail(f"Expected a validation error, got {response.status_code}")
+
+    @pytest.mark.asyncio
+    async def test_oversized_name_rejected(self) -> None:
+        """A name over the length cap is rejected with a validation error."""
+        _, headers = await self.create_user_and_get_token()
+
+        response = await self.client.post(
+            url=self.url, json={"name": "x" * 201}, headers=headers
+        )
+
+        if response.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+            pytest.fail(f"Expected a validation error, got {response.status_code}")
 
 
 class TestWorkflowList(BaseTestCase):

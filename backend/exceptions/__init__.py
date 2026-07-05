@@ -3,6 +3,7 @@
 from exceptions.auth import AuthCredentialsError
 from exceptions.base import BaseError
 from exceptions.edge import (
+    EdgeAlreadyExistsError,
     EdgeHandleMismatchError,
     EdgeNodeMismatchError,
     EdgeNotFoundError,
@@ -15,6 +16,7 @@ from exceptions.execution import (
     NodeExecutionTimeoutError,
 )
 from exceptions.llm_provider import (
+    LLMProviderAlreadyExistsError,
     LLMProviderConfigError,
     LLMProviderConnectionError,
     LLMProviderNotFoundError,
@@ -36,6 +38,7 @@ __all__ = [
     "AuthCredentialsError",
     "BaseError",
     "BlockedURLError",
+    "EdgeAlreadyExistsError",
     "EdgeHandleMismatchError",
     "EdgeNodeMismatchError",
     "EdgeNotFoundError",
@@ -44,6 +47,7 @@ __all__ = [
     "ExecutionInputValidationError",
     "ExecutionNotFoundError",
     "HTTPRequestError",
+    "LLMProviderAlreadyExistsError",
     "LLMProviderConfigError",
     "LLMProviderConnectionError",
     "LLMProviderNotFoundError",

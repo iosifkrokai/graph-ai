@@ -1,6 +1,7 @@
 """LLM provider API tests."""
 
 import uuid
+from http import HTTPStatus
 
 import pytest
 
@@ -70,6 +71,46 @@ class TestLLMProviderCreate(BaseTestCase):
             pytest.fail("API key must be stored encrypted, not as plaintext")
         elif decrypt(stored.api_key) != plaintext:
             pytest.fail("Stored API key must decrypt back to the original value")
+
+    @pytest.mark.asyncio
+    async def test_oversized_config_rejected(self) -> None:
+        """A config dict that serializes too large is rejected."""
+        _, headers = await self.create_user_and_get_token()
+        payload = {
+            "name": f"provider-{uuid.uuid4().hex[:8]}",
+            "type": LLMProviderType.OLLAMA,
+            "base_url": "https://example.com",
+            "config": {"blob": "x" * 10_000},
+        }
+
+        response = await self.client.post(url=self.url, json=payload, headers=headers)
+
+        if response.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+            pytest.fail(f"Expected a validation error, got {response.status_code}")
+
+    @pytest.mark.asyncio
+    async def test_duplicate_name_rejected(self) -> None:
+        """Creating two providers with the same name for one user returns 409."""
+        _, headers = await self.create_user_and_get_token()
+        payload = {
+            "name": f"provider-{uuid.uuid4().hex[:8]}",
+            "type": LLMProviderType.OLLAMA,
+            "base_url": "https://example.com",
+        }
+
+        first_response = await self.client.post(
+            url=self.url, json=payload, headers=headers
+        )
+        await self.assert_response_dict(response=first_response)
+
+        second_response = await self.client.post(
+            url=self.url, json=payload, headers=headers
+        )
+
+        if second_response.status_code != HTTPStatus.CONFLICT:
+            pytest.fail(
+                f"Expected 409 for a duplicate name, got {second_response.status_code}"
+            )
 
 
 class TestLLMProviderList(BaseTestCase):
