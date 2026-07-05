@@ -1477,6 +1477,33 @@ class TestExecutionReaper(BaseTestCase):
             pytest.fail("Recent RUNNING execution should be left untouched")
 
     @pytest.mark.asyncio
+    async def test_recent_heartbeat_protects_a_long_running_execution(self) -> None:
+        """An old start time doesn't reap a run whose heartbeat is recent."""
+        user, _ = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        old_start = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(hours=2)
+        still_active = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            status=ExecutionStatus.RUNNING,
+            started_at=old_start,
+            heartbeat_at=datetime.now(tz=UTC).replace(tzinfo=None),
+        )
+        active_id = still_active.id
+
+        reaped = await ExecutionUsecase().reap_stuck_executions(session=self.session)
+
+        if reaped != 0:
+            pytest.fail("A run with a fresh heartbeat should not be reaped")
+
+        self.session.expire_all()
+        after = await ExecutionRepository().get_by(session=self.session, id=active_id)
+        if after is None or after.status != ExecutionStatus.RUNNING:
+            pytest.fail("Long-running-but-active execution should stay RUNNING")
+
+    @pytest.mark.asyncio
     async def test_status_cas_prevents_clobber(self) -> None:
         """A finalized execution cannot be re-finalized (reaper/worker anti-clobber)."""
         user, _ = await self.create_user_and_get_token()
@@ -1513,6 +1540,47 @@ class TestExecutionReaper(BaseTestCase):
         after = await repository.get_by(session=self.session, id=execution_id)
         if after is None or after.status != ExecutionStatus.SUCCESS:
             pytest.fail("Finalized status must not be clobbered")
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_bumped_as_nodes_complete(self) -> None:
+        """Running a workflow advances the execution's heartbeat."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=output_node.id,
+        )
+
+        run_response = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow.id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+        execution = await self.assert_response_dict(response=run_response)
+        await run_execution(self.session, execution["id"])
+
+        self.session.expire_all()
+        after = await ExecutionRepository().get_by(
+            session=self.session, id=execution["id"]
+        )
+        if after is None or after.heartbeat_at is None:
+            pytest.fail("Expected heartbeat_at to be set after nodes completed")
 
 
 class TestExecutionParallel(BaseTestCase):

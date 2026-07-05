@@ -273,8 +273,14 @@ Second pass (closed out everything remaining):
       frame; the frontend (`useExecutions.ts`) clears that node's
       `liveTokens` entry on receipt instead of letting the retry's deltas
       append after the failed attempt's partial text.
-- [ ] **Stuck-execution timeout is absolute start-age, not heartbeat-based** — a
-      legitimately long multi-node run can be reaped as if it were actually stuck.
+- [x] **Stuck-execution timeout is now heartbeat-based, not absolute start-age**
+      — new `executions.heartbeat_at` column (migration
+      `4d8c2f0a7e91`), seeded at claim time and bumped in
+      `_record_node_result` every time a node completes.
+      `reap_stuck_executions` now compares `heartbeat_at or started_at`
+      against the cutoff, so a legitimately long multi-node run that's still
+      making progress keeps refreshing its heartbeat and won't be reaped
+      just for having run for a while.
 - [x] **Readiness probe now checks Redis and Qdrant too** (previously only
       Postgres) **and returns 503 once any dependency is unhealthy** instead
       of always 200 (`usecases/health.py`, `api/routers/health.py`). Redis/

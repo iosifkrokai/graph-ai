@@ -258,13 +258,15 @@ class ExecutionUsecase:
         if workflow is None:
             raise WorkflowNotFoundError
 
+        claim_time = datetime.now(tz=UTC).replace(tzinfo=None)
         claimed = await self._execution_repository.update_status_if(
             session=session,
             execution_id=execution_id,
             expected_status=ExecutionStatus.CREATED,
             data={
                 "status": ExecutionStatus.RUNNING,
-                "started_at": datetime.now(tz=UTC).replace(tzinfo=None),
+                "started_at": claim_time,
+                "heartbeat_at": claim_time,
             },
         )
         if not claimed:
@@ -322,9 +324,16 @@ class ExecutionUsecase:
     ) -> int:
         """Mark executions stuck in RUNNING beyond the timeout as FAILED.
 
+        Staleness is measured from ``heartbeat_at`` (bumped each time a node
+        completes), not ``started_at`` — a long multi-node run that's still
+        making progress keeps refreshing its heartbeat and won't be reaped
+        just for having run for a while. Falls back to ``started_at`` for a
+        run that hasn't completed a single node yet.
+
         Args:
             session: The session.
-            older_than_seconds: Minimum age (by ``started_at``) to consider stuck.
+            older_than_seconds: Minimum time since the last heartbeat to
+                consider stuck.
 
         Returns:
             The number of executions reaped.
@@ -336,7 +345,11 @@ class ExecutionUsecase:
         running = await self._execution_repository.get_all(
             session=session, status=ExecutionStatus.RUNNING
         )
-        stuck = [execution for execution in running if execution.started_at < cutoff]
+        stuck = [
+            execution
+            for execution in running
+            if (execution.heartbeat_at or execution.started_at) < cutoff
+        ]
         for execution in stuck:
             logger.warning("Reaping stuck execution %s", execution.id)
             await self._mark_execution_failed(
@@ -1249,6 +1262,13 @@ class ExecutionUsecase:
                 "started_at": started_at,
                 "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
             },
+        )
+        # A node just completed real work: bump the heartbeat so the reaper
+        # can tell this run is still progressing, not stalled.
+        await self._execution_repository.update_by(
+            session=session,
+            data={"heartbeat_at": datetime.now(tz=UTC).replace(tzinfo=None)},
+            id=run_context.execution_id,
         )
 
     def _retry_delay(self, attempt: int) -> float:
