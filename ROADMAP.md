@@ -262,9 +262,17 @@ Second pass (closed out everything remaining):
       the final `executions.output_data` the user actually sees) stays
       full-fidelity; HTTP node's separate 10k pipeline-level truncation is
       unrelated and untouched.
-- [ ] **Parallel wave partial-failure surfaces one arbitrary error** and writes no
-      rows for nodes that were never reached — aggregate wave errors, write
-      `SKIPPED` rows so the UI can distinguish "failed" from "never ran".
+- [x] **Parallel wave partial-failure now aggregates all failures and writes
+      SKIPPED rows for unreached nodes** — when multiple nodes in the same
+      wave fail simultaneously, `_aggregate_wave_errors` combines every
+      failure's message into the execution's overall error instead of
+      surfacing one arbitrarily (`_handle_wave_failures`,
+      `usecases/execution.py`). Nodes in waves the abort never reaches get a
+      `SKIPPED` `node_executions` row instead of no row at all, so the UI
+      can distinguish "failed" from "never ran". Applied the same "unreached
+      nodes get SKIPPED" fix to the serial execution path too, since it had
+      the identical gap (just without the "multiple simultaneous failures"
+      nuance, since serial only ever runs one node at a time).
 - [x] **LLM streaming retries no longer duplicate tokens to the client** — a
       new `token_reset` signal (`streaming/tokens.py::publish_token_reset`,
       threaded through `_NodeRunContext.token_reset_publisher`) fires right

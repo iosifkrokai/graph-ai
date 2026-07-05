@@ -106,6 +106,19 @@ class _NodeRunContext:
 
 
 @dataclass(frozen=True)
+class _WaveState:
+    """Per-node bookkeeping accumulated across waves.
+
+    The dataclass itself is frozen, but its dict fields are mutated in place
+    as nodes resolve — this just bundles them as one parameter.
+    """
+
+    outputs_by_node: dict[int, str]
+    live_by_node: dict[int, bool]
+    selected_handle_by_node: dict[int, str | None]
+
+
+@dataclass(frozen=True)
 class _NodeOutcome:
     """Final result of a single node execution."""
 
@@ -935,7 +948,7 @@ class ExecutionUsecase:
         live_by_node: dict[int, bool] = {}
         selected_handle_by_node: dict[int, str | None] = {}
 
-        for node_id in graph.topological_order:
+        for index, node_id in enumerate(graph.topological_order):
             node = graph.nodes_by_id[node_id]
 
             if node_id == graph.input_node_id:
@@ -958,18 +971,79 @@ class ExecutionUsecase:
                 )
                 continue
 
-            result = await self._run_node(
-                session=session,
-                run_context=run_context,
-                node=node,
-                parent_values=parent_values,
-            )
+            try:
+                result = await self._run_node(
+                    session=session,
+                    run_context=run_context,
+                    node=node,
+                    parent_values=parent_values,
+                )
+            except BaseError:
+                # This node's own failure is already recorded; nodes later in
+                # topological order that the abort never reaches get a
+                # SKIPPED row instead of no row at all.
+                for unreached_id in graph.topological_order[index + 1 :]:
+                    await self._record_skip(
+                        session=session, run_context=run_context, node_id=unreached_id
+                    )
+                raise
             outputs_by_node[node_id] = result.output
             live_by_node[node_id] = True
             selected_handle_by_node[node_id] = result.selected_handle
 
         self._raise_if_output_not_live(graph=graph, live_by_node=live_by_node)
         return outputs_by_node
+
+    async def _prepare_wave(
+        self,
+        ready: list[int],
+        graph: ExecutionGraphContext,
+        state: _WaveState,
+        run_context: _NodeRunContext,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> tuple[list[int], dict[int, list[str]]]:
+        """Split a wave's ready nodes into runnable ones vs. dead-branch skips.
+
+        Args:
+            ready: Node IDs whose parents have all resolved.
+            graph: Validated graph context.
+            state: Per-node bookkeeping so far; mutated in place for newly-
+                skipped nodes.
+            run_context: Loop-invariant run context.
+            session_factory: Factory for per-node sessions.
+
+        Returns:
+            The runnable node IDs and each one's live parent outputs.
+
+        """
+        runnable: list[int] = []
+        parent_values_by_node: dict[int, list[str]] = {}
+        for node_id in ready:
+            if node_id == graph.input_node_id:
+                parent_values_by_node[node_id] = []
+                runnable.append(node_id)
+                continue
+
+            parent_values, is_live = self._resolve_live_parents(
+                node_id=node_id,
+                graph=graph,
+                outputs_by_node=state.outputs_by_node,
+                live_by_node=state.live_by_node,
+                selected_handle_by_node=state.selected_handle_by_node,
+            )
+            if is_live:
+                parent_values_by_node[node_id] = parent_values
+                runnable.append(node_id)
+            else:
+                state.live_by_node[node_id] = False
+                state.selected_handle_by_node[node_id] = None
+                await self._record_skip_isolated(
+                    session_factory=session_factory,
+                    run_context=run_context,
+                    node_id=node_id,
+                )
+
+        return runnable, parent_values_by_node
 
     async def _run_nodes_parallel(
         self,
@@ -997,38 +1071,19 @@ class ExecutionUsecase:
         indegree = {
             node_id: len(graph.inbound[node_id]) for node_id in graph.nodes_by_id
         }
-        outputs_by_node: dict[int, str] = {}
-        live_by_node: dict[int, bool] = {}
-        selected_handle_by_node: dict[int, str | None] = {}
+        state = _WaveState(
+            outputs_by_node={}, live_by_node={}, selected_handle_by_node={}
+        )
         ready = [node_id for node_id, degree in indegree.items() if degree == 0]
 
         while ready:
-            runnable: list[int] = []
-            parent_values_by_node: dict[int, list[str]] = {}
-            for node_id in ready:
-                if node_id == graph.input_node_id:
-                    parent_values_by_node[node_id] = []
-                    runnable.append(node_id)
-                    continue
-
-                parent_values, is_live = self._resolve_live_parents(
-                    node_id=node_id,
-                    graph=graph,
-                    outputs_by_node=outputs_by_node,
-                    live_by_node=live_by_node,
-                    selected_handle_by_node=selected_handle_by_node,
-                )
-                if is_live:
-                    parent_values_by_node[node_id] = parent_values
-                    runnable.append(node_id)
-                else:
-                    live_by_node[node_id] = False
-                    selected_handle_by_node[node_id] = None
-                    await self._record_skip_isolated(
-                        session_factory=session_factory,
-                        run_context=run_context,
-                        node_id=node_id,
-                    )
+            runnable, parent_values_by_node = await self._prepare_wave(
+                ready=ready,
+                graph=graph,
+                state=state,
+                run_context=run_context,
+                session_factory=session_factory,
+            )
 
             wave_results = await asyncio.gather(
                 *(
@@ -1042,13 +1097,27 @@ class ExecutionUsecase:
                 ),
                 return_exceptions=True,
             )
+            failures: list[BaseException] = []
             for result in wave_results:
                 if isinstance(result, BaseException):
-                    raise result
+                    failures.append(result)
+                    continue
                 node_id, node_result = result
-                outputs_by_node[node_id] = node_result.output
-                live_by_node[node_id] = True
-                selected_handle_by_node[node_id] = node_result.selected_handle
+                state.outputs_by_node[node_id] = node_result.output
+                state.live_by_node[node_id] = True
+                state.selected_handle_by_node[node_id] = node_result.selected_handle
+
+            if failures:
+                reached = (
+                    set(state.outputs_by_node) | set(state.live_by_node) | set(runnable)
+                )
+                await self._handle_wave_failures(
+                    failures=failures,
+                    reached=reached,
+                    graph=graph,
+                    run_context=run_context,
+                    session_factory=session_factory,
+                )
 
             next_ready: list[int] = []
             for node_id in ready:
@@ -1058,8 +1127,72 @@ class ExecutionUsecase:
                         next_ready.append(child_id)
             ready = next_ready
 
-        self._raise_if_output_not_live(graph=graph, live_by_node=live_by_node)
-        return outputs_by_node
+        self._raise_if_output_not_live(graph=graph, live_by_node=state.live_by_node)
+        return state.outputs_by_node
+
+    async def _handle_wave_failures(
+        self,
+        failures: list[BaseException],
+        reached: set[int],
+        graph: ExecutionGraphContext,
+        run_context: _NodeRunContext,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Record unreached nodes as SKIPPED, then raise an aggregated error.
+
+        Each failed node already recorded its own FAILED row (via
+        ``_run_node``'s retry loop); nodes in waves that were never reached
+        because this wave aborted the run get a SKIPPED row instead of no
+        row at all, so the UI can tell "failed" from "never ran".
+
+        Args:
+            failures: The exceptions raised by this wave's failed nodes.
+            reached: Node IDs already resolved (success or failure) this wave.
+            graph: Validated graph context.
+            run_context: Loop-invariant run context.
+            session_factory: Factory for per-node sessions.
+
+        Raises:
+            BaseException: The aggregated failure for this wave.
+
+        """
+        for node_id in set(graph.nodes_by_id) - reached:
+            await self._record_skip_isolated(
+                session_factory=session_factory,
+                run_context=run_context,
+                node_id=node_id,
+            )
+        raise self._aggregate_wave_errors(failures)
+
+    @staticmethod
+    def _aggregate_wave_errors(failures: list[BaseException]) -> BaseException:
+        """Combine simultaneous node failures from one wave into one error.
+
+        Each failing node already recorded its own error in
+        ``node_executions``; this only decides what the *overall execution's*
+        failure reason says, so a wave where several nodes fail at once
+        doesn't just report one of them arbitrarily.
+
+        Args:
+            failures: The exceptions raised by this wave's failed nodes.
+
+        Returns:
+            One exception summarizing all of them.
+
+        """
+        base_errors = [
+            failure for failure in failures if isinstance(failure, BaseError)
+        ]
+        if len(base_errors) != len(failures):
+            # A non-domain exception (an actual bug) shouldn't be swallowed
+            # into a domain-error message; let it surface as-is.
+            return next(f for f in failures if not isinstance(f, BaseError))
+        if len(base_errors) == 1:
+            return base_errors[0]
+
+        combined = "; ".join(error.message for error in base_errors)
+        message = f"{len(base_errors)} nodes failed: {combined}"
+        return type(base_errors[0])(message=message)
 
     async def _run_node_isolated(
         self,

@@ -3,7 +3,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import httpx
 import pytest
@@ -19,6 +19,9 @@ from enums import ExecutionStatus, NodeType
 from exceptions import ExecutionGraphValidationError, LLMProviderConnectionError
 from nodes import NodeExecutionResult
 from schemas import ExecutionResponse
+
+if TYPE_CHECKING:
+    from nodes.base import NodeExecutionContext
 from tests.factories import (
     EdgeFactory,
     ExecutionFactory,
@@ -1672,6 +1675,137 @@ class TestExecutionParallel(BaseTestCase):
         overlapped = first.started_at < second_end and second.started_at < first_end
         if not overlapped:
             pytest.fail("Independent branches did not overlap; ran serially")
+
+    async def _build_diamond(self, user: dict) -> dict[str, int]:
+        """Build Input -> {A, B} -> Output and return node IDs by label."""
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        branch_a = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LLM,
+            data={"label": "A"},
+        )
+        branch_b = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LLM,
+            data={"label": "B"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        for source, target in (
+            (input_node, branch_a),
+            (input_node, branch_b),
+            (branch_a, output_node),
+            (branch_b, output_node),
+        ):
+            await EdgeFactory.create_async(
+                session=self.session,
+                workflow_id=workflow.id,
+                source_node_id=source.id,
+                target_node_id=target.id,
+            )
+        return {
+            "workflow": workflow.id,
+            "input": input_node.id,
+            "a": branch_a.id,
+            "b": branch_b.id,
+            "output": output_node.id,
+        }
+
+    @pytest.mark.asyncio
+    async def test_simultaneous_wave_failures_are_aggregated(
+        self, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two nodes failing in the same wave both appear in the error."""
+
+        async def fail_ab(*args: object, **kwargs: object) -> NodeExecutionResult:
+            """Fail nodes A and B; succeed for everything else."""
+            del args
+            context = cast("NodeExecutionContext", kwargs["context"])
+            label = context.node_data.get("label")
+            if label in {"A", "B"}:
+                message = f"{label} broke"
+                raise ExecutionGraphValidationError(message=message)
+            return NodeExecutionResult(output="ok")
+
+        monkeypatch.setattr("nodes.registry.NodeHandlerRegistry.execute", fail_ab)
+
+        user, _ = await self.create_user_and_get_token()
+        ids = await self._build_diamond(user)
+        execution = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=ids["workflow"],
+            status=ExecutionStatus.CREATED,
+            input_data={"value": "hello"},
+        )
+        execution_id = execution.id
+
+        factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+        result = await ExecutionUsecase().run_execution(
+            session=self.session, execution_id=execution_id, session_factory=factory
+        )
+
+        if result.status != ExecutionStatus.FAILED:
+            pytest.fail("Execution with two failing nodes should be FAILED")
+        error = result.error or ""
+        if "A broke" not in error or "B broke" not in error:
+            pytest.fail(f"Expected both node failures in the error, got: {error!r}")
+
+    @pytest.mark.asyncio
+    async def test_unreached_node_marked_skipped_after_wave_failure(
+        self, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A node in a later wave gets a SKIPPED row, not no row at all."""
+
+        async def fail_a(*args: object, **kwargs: object) -> NodeExecutionResult:
+            """Fail node A only; succeed for everything else."""
+            del args
+            context = cast("NodeExecutionContext", kwargs["context"])
+            if context.node_data.get("label") == "A":
+                message = "A broke"
+                raise ExecutionGraphValidationError(message=message)
+            return NodeExecutionResult(output="ok")
+
+        monkeypatch.setattr("nodes.registry.NodeHandlerRegistry.execute", fail_a)
+
+        user, _ = await self.create_user_and_get_token()
+        ids = await self._build_diamond(user)
+        execution = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=ids["workflow"],
+            status=ExecutionStatus.CREATED,
+            input_data={"value": "hello"},
+        )
+        execution_id = execution.id
+
+        factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+        result = await ExecutionUsecase().run_execution(
+            session=self.session, execution_id=execution_id, session_factory=factory
+        )
+        if result.status != ExecutionStatus.FAILED:
+            pytest.fail("Execution with a failing node should be FAILED")
+
+        self.session.expire_all()
+        rows = await NodeExecutionRepository().get_all(
+            session=self.session, execution_id=execution_id
+        )
+        by_node = {row.node_id: row for row in rows}
+        output_row = by_node.get(ids["output"])
+        if output_row is None or output_row.status != ExecutionStatus.SKIPPED:
+            pytest.fail("Unreached Output node should be marked SKIPPED")
 
 
 class TestExecutionStream(BaseTestCase):
