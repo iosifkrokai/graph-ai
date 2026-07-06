@@ -203,7 +203,7 @@ Second pass (closed out everything remaining):
       race-free) and shows "no longer exists"/"no longer available" instead
       of just a blank dropdown with the dead id silently retained.
 
-## Phase 5 — Security & data hardening (in progress)
+## Phase 5 — Security & data hardening ✅ done
 
 - [x] **Rate limiting** on `/auth/login` and `/auth/register` — a fixed-window
       Redis counter (`api/dependencies/rate_limit.py`, `INCR`+`EXPIRE` per
@@ -276,10 +276,23 @@ Second pass (closed out everything remaining):
       wrap the underlying `IntegrityError` at the usecase layer (with a
       `session.rollback()` first, same lesson as the `BaseError` rollback
       fix above) so the API returns a clean 409 instead of a raw 500.
-- [ ] **Decouple `node_executions` from live `nodes`** so a pinned rerun of a
-      version whose nodes were since *deleted* (not edited) can still record
-      per-node results — either denormalize node identity or key on
-      `(version_id, snapshot_node_id)`.
+- [x] **Decouple `node_executions` from live `nodes`** — `node_id` is no
+      longer an enforced foreign key (`db/models/node_execution.py`,
+      migration `8f3a5d1c7b92` drops `node_executions_node_id_fkey`); it's
+      now a plain historical reference, so rerunning a pinned version whose
+      node was since *deleted* (not edited) no longer fails to INSERT its
+      result row, and deleting a node no longer collaterally destroys
+      unrelated execution history via cascade. Two new denormalized columns,
+      `node_type`/`node_label`, are captured at record time from the graph
+      snapshot (`_record_node_result`/`_record_skip*` now take the full
+      `NodeResponse` instead of a bare `node_id`) so a result stays
+      meaningful even after the live node is gone — exposed through
+      `NodeExecutionResponse` and used as ChatPanel's node-label fallback
+      (`meta?.label ?? nodeResult.node_label ?? Node #id`) ahead of the
+      already-existing raw-ID fallback. Verified both migration directions
+      against the real dev DB, plus a new test
+      (`test_run_pinned_version_survives_deleted_node`) that deletes a node
+      and reruns its pinned version end-to-end.
 - [x] **`BaseError` execution-failure path now rolls back the session** before
       marking `FAILED`, matching the generic-`Exception` branch beside it
       (`usecases/execution.py::run_execution`) — a poisoned transaction can

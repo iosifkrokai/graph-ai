@@ -6,7 +6,7 @@ from sqlalchemy import Enum, ForeignKey, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.models import BaseWithID
-from enums import ExecutionStatus
+from enums import ExecutionStatus, NodeType
 
 
 class NodeExecution(BaseWithID):
@@ -20,11 +20,24 @@ class NodeExecution(BaseWithID):
         index=True,
         comment="Parent execution ID",
     )
+    # Deliberately not a foreign key: a pinned execution can rerun a
+    # workflow-version snapshot referencing a node since deleted from the
+    # live `nodes` table. Kept as a plain historical reference so recording
+    # a result never fails, and so deleting a node no longer collaterally
+    # deletes its (unrelated) execution history via cascade.
     node_id: Mapped[int] = mapped_column(
-        ForeignKey("nodes.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        comment="Executed node ID",
+        comment="Executed node ID (not FK-enforced; the node may since be deleted)",
+    )
+    # Denormalized from the node at execution time, so the result stays
+    # meaningful even after the live node is edited or deleted.
+    node_type: Mapped[NodeType | None] = mapped_column(
+        Enum(NodeType),
+        comment="Node type at execution time (denormalized snapshot)",
+    )
+    node_label: Mapped[str | None] = mapped_column(
+        Text, comment="Node label at execution time (denormalized snapshot)"
     )
 
     status: Mapped[ExecutionStatus] = mapped_column(

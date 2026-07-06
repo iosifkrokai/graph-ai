@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from enums import ExecutionStatus
+from enums import ExecutionStatus, NodeType
 
 
 class ExecutionInputPayload(BaseModel):
@@ -88,7 +88,18 @@ class NodeExecutionResponse(BaseModel):
 
     id: int = Field(default=..., description="Node execution ID", gt=0)
     execution_id: int = Field(default=..., description="Parent execution ID", gt=0)
-    node_id: int = Field(default=..., description="Executed node ID", gt=0)
+    node_id: int = Field(
+        default=...,
+        description="Executed node ID (not FK-enforced; the node may since "
+        "be deleted from the live workflow)",
+        gt=0,
+    )
+    node_type: NodeType | None = Field(
+        default=None, description="Node type at execution time"
+    )
+    node_label: str | None = Field(
+        default=None, description="Node label at execution time"
+    )
     status: ExecutionStatus = Field(default=..., description="Node execution status")
     output: str | None = Field(default=None, description="Node output text")
     error: str | None = Field(default=None, description="Error message")

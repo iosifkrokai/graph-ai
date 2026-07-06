@@ -2134,6 +2134,84 @@ class TestExecutionVersioning(BaseTestCase):
             pytest.fail("Pinned version should reproduce the v1 snapshot output")
 
     @pytest.mark.asyncio
+    async def test_run_pinned_version_survives_deleted_node(self) -> None:
+        """Rerunning a pinned version still records results after a node is deleted."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        template_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.TEMPLATE,
+            data={"label": "Template", "template": "{{input}}"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=template_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=template_node.id,
+            target_node_id=output_node.id,
+        )
+        workflow_id = workflow.id
+        template_node_id = template_node.id
+
+        first = await self.client.post(
+            url="/executions",
+            json={"workflow_id": workflow_id, "input_data": {"value": "hello"}},
+            headers=headers,
+        )
+        first_data = await self.assert_response_dict(response=first)
+        pinned_version_id = first_data["version_id"]
+
+        # Delete the template node from the live graph (not just edit it) —
+        # the pinned snapshot still references its now-nonexistent ID.
+        await NodeRepository().delete_by(session=self.session, id=template_node_id)
+
+        rerun = await self.client.post(
+            url="/executions",
+            json={
+                "workflow_id": workflow_id,
+                "input_data": {"value": "hello"},
+                "version_id": pinned_version_id,
+            },
+            headers=headers,
+        )
+        rerun_data = await self.assert_response_dict(response=rerun)
+
+        result = await run_execution(self.session, rerun_data["id"])
+        if result.status != ExecutionStatus.SUCCESS:
+            pytest.fail("Pinned version should still run after its node is deleted")
+
+        node_executions = await NodeExecutionRepository().get_all(
+            session=self.session, execution_id=result.id, node_id=template_node_id
+        )
+        if len(node_executions) != 1:
+            pytest.fail("The deleted node's result should still be recorded")
+        recorded = node_executions[0]
+        if recorded.node_type != NodeType.TEMPLATE:
+            pytest.fail("Node type should be denormalized even after node deletion")
+        if recorded.node_label != "Template":
+            pytest.fail("Node label should be denormalized even after node deletion")
+
+    @pytest.mark.asyncio
     async def test_unknown_version_id_is_rejected(self) -> None:
         """Requesting a non-existent version_id fails fast."""
         user, headers = await self.create_user_and_get_token()

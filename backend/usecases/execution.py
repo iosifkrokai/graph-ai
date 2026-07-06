@@ -907,20 +907,20 @@ class ExecutionUsecase:
         self,
         session: AsyncSession,
         run_context: _NodeRunContext,
-        node_id: int,
+        node: NodeResponse,
     ) -> None:
         """Persist a SKIPPED result for a node with no live inbound edge.
 
         Args:
             session: Database session to record the result on.
             run_context: Loop-invariant run context.
-            node_id: The skipped node's ID.
+            node: The skipped node.
 
         """
         await self._record_node_result(
             session=session,
             run_context=run_context,
-            node_id=node_id,
+            node=node,
             started_at=datetime.now(tz=UTC),
             outcome=_NodeOutcome(status=ExecutionStatus.SKIPPED),
         )
@@ -929,19 +929,19 @@ class ExecutionUsecase:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         run_context: _NodeRunContext,
-        node_id: int,
+        node: NodeResponse,
     ) -> None:
         """Persist a SKIPPED result for a node on a dedicated session.
 
         Args:
             session_factory: Factory for the node's own session.
             run_context: Loop-invariant run context.
-            node_id: The skipped node's ID.
+            node: The skipped node.
 
         """
         async with session_factory() as skip_session:
             await self._record_skip(
-                session=skip_session, run_context=run_context, node_id=node_id
+                session=skip_session, run_context=run_context, node=node
             )
 
     def _raise_if_output_not_live(
@@ -1001,7 +1001,7 @@ class ExecutionUsecase:
                 live_by_node[node_id] = False
                 selected_handle_by_node[node_id] = None
                 await self._record_skip(
-                    session=session, run_context=run_context, node_id=node_id
+                    session=session, run_context=run_context, node=node
                 )
                 continue
 
@@ -1018,7 +1018,9 @@ class ExecutionUsecase:
                 # SKIPPED row instead of no row at all.
                 for unreached_id in graph.topological_order[index + 1 :]:
                     await self._record_skip(
-                        session=session, run_context=run_context, node_id=unreached_id
+                        session=session,
+                        run_context=run_context,
+                        node=graph.nodes_by_id[unreached_id],
                     )
                 raise
             outputs_by_node[node_id] = result.output
@@ -1074,7 +1076,7 @@ class ExecutionUsecase:
                 await self._record_skip_isolated(
                     session_factory=session_factory,
                     run_context=run_context,
-                    node_id=node_id,
+                    node=graph.nodes_by_id[node_id],
                 )
 
         return runnable, parent_values_by_node
@@ -1194,7 +1196,7 @@ class ExecutionUsecase:
             await self._record_skip_isolated(
                 session_factory=session_factory,
                 run_context=run_context,
-                node_id=node_id,
+                node=graph.nodes_by_id[node_id],
             )
         raise self._aggregate_wave_errors(failures)
 
@@ -1309,7 +1311,7 @@ class ExecutionUsecase:
                 await self._record_node_result(
                     session=session,
                     run_context=run_context,
-                    node_id=node.id,
+                    node=node,
                     started_at=started_at,
                     outcome=_NodeOutcome(
                         status=ExecutionStatus.FAILED, error=exc.message
@@ -1320,7 +1322,7 @@ class ExecutionUsecase:
             await self._record_node_result(
                 session=session,
                 run_context=run_context,
-                node_id=node.id,
+                node=node,
                 started_at=started_at,
                 outcome=_NodeOutcome(
                     status=ExecutionStatus.SUCCESS, output=result.output
@@ -1404,7 +1406,7 @@ class ExecutionUsecase:
         self,
         session: AsyncSession,
         run_context: _NodeRunContext,
-        node_id: int,
+        node: NodeResponse,
         started_at: datetime,
         outcome: _NodeOutcome,
     ) -> None:
@@ -1413,7 +1415,7 @@ class ExecutionUsecase:
         Args:
             session: Database session.
             run_context: Loop-invariant run context.
-            node_id: Executed node ID.
+            node: Executed node (from the graph snapshot).
             started_at: When the node started.
             outcome: The node's final status, output, and error.
 
@@ -1422,7 +1424,9 @@ class ExecutionUsecase:
             session=session,
             data={
                 "execution_id": run_context.execution_id,
-                "node_id": node_id,
+                "node_id": node.id,
+                "node_type": node.type,
+                "node_label": node.data.get("label"),
                 "status": outcome.status,
                 "output": _truncate_for_storage(outcome.output),
                 "error": outcome.error,

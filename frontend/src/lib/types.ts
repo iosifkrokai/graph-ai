@@ -217,6 +217,8 @@ export interface NodeExecutionResult {
   id: number
   execution_id: number
   node_id: number
+  node_type: NodeType | null
+  node_label: string | null
   status: ExecutionStatus
   output: string | null
   error: string | null

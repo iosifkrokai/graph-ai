@@ -353,7 +353,9 @@ function ChatTurnView({
                 <div key={nodeResult.id} className="border-b border-white/10 pb-2 last:border-0 last:pb-0">
                   <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wide text-[var(--muted)]">
                     <span className="pixel-pill text-[10px] normal-case">
-                      {meta?.label ?? `Node #${nodeResult.node_id}`}
+                      {meta?.label ??
+                        nodeResult.node_label ??
+                        `Node #${nodeResult.node_id}`}
                     </span>
                     <span className={STATUS_COLORS[nodeResult.status]}>
                       {nodeResult.status}
