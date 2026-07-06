@@ -4,6 +4,12 @@
 # (e.g. the worker crashed mid-run) and is reaped to FAILED.
 STUCK_EXECUTION_TIMEOUT_SECONDS = 3600
 
+# Age, in seconds, after which a still-CREATED execution (never claimed by a
+# worker — e.g. the enqueue call was lost after the DB commit) is re-enqueued.
+# Much shorter than STUCK_EXECUTION_TIMEOUT_SECONDS: "never got picked up"
+# should self-heal fast rather than wait an hour.
+STUCK_CREATED_TIMEOUT_SECONDS = 120
+
 # Server-Sent Events stream: interval between status polls and a hard cap on
 # iterations so a stream cannot stay open indefinitely. The cap covers a
 # long-running node (up to ~15 min); past it the stream emits an "expired"

@@ -232,4 +232,5 @@ class AuthUsecase:
             },
         )
 
+        await session.commit()
         return UserResponse.model_validate(user)

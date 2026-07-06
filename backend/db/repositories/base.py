@@ -16,7 +16,10 @@ class BaseRepository[Model: BaseWithID]:
         self.model = model
 
     async def create(self, session: AsyncSession, data: dict[str, Any]) -> Model:
-        """Create a new model instance.
+        """Stage a new model instance (flushed, not committed).
+
+        The caller commits — this lets a usecase batch several writes into
+        one atomic unit instead of each write being its own transaction.
 
         Args:
             session: The async session.
@@ -29,7 +32,7 @@ class BaseRepository[Model: BaseWithID]:
         instance = self.model(**data)
 
         session.add(instance)
-        await session.commit()
+        await session.flush()
         await session.refresh(instance)
 
         return instance
@@ -37,7 +40,9 @@ class BaseRepository[Model: BaseWithID]:
     async def create_many(
         self, session: AsyncSession, data: list[dict[str, Any]]
     ) -> list[Model]:
-        """Create multiple model instances.
+        """Stage multiple model instances (flushed, not committed).
+
+        The caller commits — see `create`.
 
         Args:
             session: The async session.
@@ -49,7 +54,7 @@ class BaseRepository[Model: BaseWithID]:
         """
         instances = [self.model(**data) for data in data]
         session.add_all(instances)
-        await session.commit()
+        await session.flush()
 
         for instance in instances:
             await session.refresh(instance)
@@ -107,7 +112,9 @@ class BaseRepository[Model: BaseWithID]:
     async def update_by(
         self, session: AsyncSession, data: dict[str, Any], **filters: object
     ) -> Model | None:
-        """Update a model instance by filters.
+        """Stage an update to a model instance by filters (flushed, not committed).
+
+        The caller commits — see `create`.
 
         Args:
             session: The async session.
@@ -124,13 +131,15 @@ class BaseRepository[Model: BaseWithID]:
             for key, value in data.items():
                 setattr(instance, key, value)
 
-            await session.commit()
+            await session.flush()
             await session.refresh(instance)
 
         return instance
 
     async def delete_by(self, session: AsyncSession, **filters: object) -> bool:
-        """Delete a model instance by filters.
+        """Stage deleting a model instance by filters (flushed, not committed).
+
+        The caller commits — see `create`.
 
         Args:
             session: The async session.
@@ -144,14 +153,16 @@ class BaseRepository[Model: BaseWithID]:
 
         if instance:
             await session.delete(instance)
-            await session.commit()
+            await session.flush()
 
             return True
 
         return False
 
     async def delete_all(self, session: AsyncSession, **filters: object) -> bool:
-        """Delete all model instances by filters.
+        """Stage deleting all model instances by filters (flushed, not committed).
+
+        The caller commits — see `create`.
 
         Args:
             session: The async session.
@@ -167,7 +178,7 @@ class BaseRepository[Model: BaseWithID]:
         for instance in result.scalars().all():
             await session.delete(instance)
 
-        await session.commit()
+        await session.flush()
 
         return True
 

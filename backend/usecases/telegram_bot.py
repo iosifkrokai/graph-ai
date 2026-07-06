@@ -40,6 +40,7 @@ class TelegramBotUsecase:
                 "bot_token": encrypt(data.bot_token),
             },
         )
+        await session.commit()
         return TelegramBotResponse.model_validate(bot)
 
     async def get_telegram_bots(
@@ -126,6 +127,7 @@ class TelegramBotUsecase:
         if not updated:
             raise TelegramBotNotFoundError
 
+        await session.commit()
         return TelegramBotResponse.model_validate(updated)
 
     async def delete_telegram_bot(
@@ -147,3 +149,4 @@ class TelegramBotUsecase:
         )
         if not deleted:
             raise TelegramBotNotFoundError
+        await session.commit()

@@ -24,6 +24,7 @@ from constants import (
     RETRY_BACKOFF_BASE_SECONDS,
     STREAM_MAX_ITERATIONS,
     STREAM_POLL_SECONDS,
+    STUCK_CREATED_TIMEOUT_SECONDS,
     STUCK_EXECUTION_TIMEOUT_SECONDS,
 )
 from db.repositories import (
@@ -222,6 +223,7 @@ class ExecutionUsecase:
                 "telegram_chat_id": telegram_chat_id,
             },
         )
+        await session.commit()
 
         await enqueue(execution.id)
 
@@ -334,6 +336,8 @@ class ExecutionUsecase:
         self,
         session: AsyncSession,
         older_than_seconds: int = STUCK_EXECUTION_TIMEOUT_SECONDS,
+        created_older_than_seconds: int = STUCK_CREATED_TIMEOUT_SECONDS,
+        re_enqueue: Callable[[int], Awaitable[None]] | None = None,
     ) -> int:
         """Mark executions stuck in RUNNING beyond the timeout as FAILED.
 
@@ -343,18 +347,30 @@ class ExecutionUsecase:
         just for having run for a while. Falls back to ``started_at`` for a
         run that hasn't completed a single node yet.
 
+        Also re-enqueues executions stuck in ``CREATED`` beyond a much
+        shorter timeout — these were durably persisted but never picked up
+        by a worker (e.g. the enqueue call was lost after the DB commit).
+        Re-enqueuing rather than failing them is safe: the worker's job
+        dedup (``_job_id=f"execution:{id}"``) makes a duplicate enqueue for
+        an execution that's actually already queued/running a no-op.
+
         Args:
             session: The session.
             older_than_seconds: Minimum time since the last heartbeat to
-                consider stuck.
+                consider a RUNNING execution stuck.
+            created_older_than_seconds: Minimum time since creation to
+                consider a CREATED execution stuck.
+            re_enqueue: Callback that re-schedules a stale CREATED execution
+                for background running. If ``None``, stale CREATED
+                executions are left alone.
 
         Returns:
-            The number of executions reaped.
+            The number of executions reaped (failed RUNNING + re-enqueued
+            CREATED).
 
         """
-        cutoff = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(
-            seconds=older_than_seconds
-        )
+        now = datetime.now(tz=UTC).replace(tzinfo=None)
+        cutoff = now - timedelta(seconds=older_than_seconds)
         running = await self._execution_repository.get_all(
             session=session, status=ExecutionStatus.RUNNING
         )
@@ -371,7 +387,25 @@ class ExecutionUsecase:
                 error="Execution timed out (worker did not finish)",
             )
 
-        return len(stuck)
+        reaped = len(stuck)
+
+        if re_enqueue is not None:
+            created_cutoff = now - timedelta(seconds=created_older_than_seconds)
+            created = await self._execution_repository.get_all(
+                session=session, status=ExecutionStatus.CREATED
+            )
+            stale_created = [
+                execution
+                for execution in created
+                if execution.started_at < created_cutoff
+            ]
+            for execution in stale_created:
+                logger.warning("Re-enqueuing stale CREATED execution %s", execution.id)
+                await re_enqueue(execution.id)
+
+            reaped += len(stale_created)
+
+        return reaped
 
     async def _load_graph(
         self, session: AsyncSession, workflow_id: int
@@ -1403,6 +1437,7 @@ class ExecutionUsecase:
             data={"heartbeat_at": datetime.now(tz=UTC).replace(tzinfo=None)},
             id=run_context.execution_id,
         )
+        await session.commit()
 
     def _retry_delay(self, attempt: int) -> float:
         """Compute exponential backoff delay for a retry attempt.

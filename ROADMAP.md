@@ -229,13 +229,31 @@ Second pass (closed out everything remaining):
       groundwork for a future refresh token + revocation list keyed on `jti`.
       **Still open:** the refresh token + revocation list itself; currently
       still a single 30-minute token with no way to log out server-side.
-- [ ] **Unit-of-work commits.** Every repository write commits individually
-      (`db/repositories/base.py`); `register` commits the user then the default
-      provider as two separate operations, and `create_execution` commits then
-      enqueues — a crash between steps leaves orphaned state (a providerless user;
-      a `CREATED` execution the reaper never reaps, since it only scans `RUNNING`).
-      Fix: flush-not-commit repos + one commit per usecase, and have the reaper
-      also consider stale `CREATED` rows.
+- [x] **Unit-of-work commits.** `BaseRepository`'s write methods (`create`,
+      `create_many`, `update_by`, `delete_by`, `delete_all`) now `flush` instead
+      of `commit` (`db/repositories/base.py`) — the caller decides when to
+      finalize. Single-write usecase methods (workflow/node/edge/llm_provider/
+      telegram_bot/user CRUD) got a mechanically relocated `session.commit()`
+      right after the repository call — same timing as before, just owned by
+      the usecase instead of the repository, since their writes are read by
+      other sessions in near-real-time (SSE status polling, the Chat "Details"
+      view) and can't be deferred. The two real multi-write bugs got genuine
+      fixes: `AuthUsecase.register` now commits the new `User` and its default
+      Ollama `LLMProvider` together, so a crash between the two rolls back to
+      no user at all instead of a providerless one; `ExecutionUsecase.
+      create_execution` now commits the `Execution` row (plus any
+      `WorkflowVersion` snapshot) *before* calling `enqueue`, so a durably
+      `CREATED` execution is never lost to a crash between the two writes.
+      `_record_node_result` (a node's result + heartbeat bump) also now
+      commits both together. Since a DB transaction can't span the Redis
+      enqueue call, the remaining "committed but never enqueued" window is
+      covered by extending the reaper: `reap_stuck_executions` gained a
+      `re_enqueue` callback and now also re-enqueues (not fails) `CREATED`
+      executions older than a new `STUCK_CREATED_TIMEOUT_SECONDS = 120`
+      (`constants/execution.py`) — re-enqueuing is safe because ARQ's
+      existing `_job_id=f"execution:{id}"` dedup makes a duplicate enqueue for
+      an execution that's actually already running a no-op. `worker.py`'s
+      cron function builds the real callback from `ctx["redis"]`.
 - [ ] **Timezone-aware datetime columns** (`DateTime(timezone=True)` everywhere) —
       correctness today depends on the DB session timezone being UTC.
 - [x] **Added missing unique constraints** — `edges(workflow_id,

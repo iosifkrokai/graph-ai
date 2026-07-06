@@ -342,7 +342,7 @@ def _extract_message(update: dict[str, Any]) -> tuple[int | None, str | None]:
 async def reap_stuck_executions(
     ctx: dict[Any, Any], *args: object, **kwargs: object
 ) -> None:
-    """Reap executions stuck in RUNNING beyond the timeout.
+    """Reap executions stuck in RUNNING, and re-enqueue stale CREATED ones.
 
     Args:
         ctx: ARQ job context.
@@ -350,9 +350,19 @@ async def reap_stuck_executions(
         kwargs: Unused keyword arguments (ARQ coroutine protocol).
 
     """
-    del ctx, args, kwargs
+    del args, kwargs
+    redis: ArqRedis = ctx["redis"]
+
+    async def re_enqueue(execution_id: int) -> None:
+        """Re-enqueue the execution job, deduplicated by execution ID."""
+        await redis.enqueue_job(
+            "run_execution_task", execution_id, _job_id=f"execution:{execution_id}"
+        )
+
     async with async_session() as session:
-        reaped = await ExecutionUsecase().reap_stuck_executions(session=session)
+        reaped = await ExecutionUsecase().reap_stuck_executions(
+            session=session, re_enqueue=re_enqueue
+        )
     if reaped:
         logger.warning("Reaped %s stuck execution(s)", reaped)
 

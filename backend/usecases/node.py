@@ -278,12 +278,12 @@ class NodeUsecase:
             data=validated_data,
         )
 
-        return NodeResponse.model_validate(
-            await self._node_repository.create(
-                session=session,
-                data={**data.model_dump(), "data": validated_data},
-            )
+        node = await self._node_repository.create(
+            session=session,
+            data={**data.model_dump(), "data": validated_data},
         )
+        await session.commit()
+        return NodeResponse.model_validate(node)
 
     async def get_nodes(
         self,
@@ -410,6 +410,7 @@ class NodeUsecase:
         if not updated:
             raise NodeNotFoundError
 
+        await session.commit()
         return NodeResponse.model_validate(updated)
 
     async def delete_node(
@@ -435,3 +436,4 @@ class NodeUsecase:
         deleted = await self._node_repository.delete_by(session=session, id=node_id)
         if not deleted:
             raise NodeNotFoundError
+        await session.commit()

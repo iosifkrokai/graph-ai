@@ -124,6 +124,7 @@ class EdgeUsecase:
             await session.rollback()
             raise EdgeAlreadyExistsError from exc
 
+        await session.commit()
         return EdgeResponse.model_validate(created)
 
     async def get_edges(
@@ -256,6 +257,7 @@ class EdgeUsecase:
         if not edge:
             raise EdgeNotFoundError
 
+        await session.commit()
         return EdgeResponse.model_validate(edge)
 
     async def delete_edge(
@@ -278,3 +280,4 @@ class EdgeUsecase:
         deleted = await self._edge_repository.delete_by(session=session, id=edge_id)
         if not deleted:
             raise EdgeNotFoundError
+        await session.commit()

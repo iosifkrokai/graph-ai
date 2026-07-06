@@ -29,11 +29,11 @@ class WorkflowUsecase:
             The created workflow.
 
         """
-        return WorkflowResponse.model_validate(
-            await self._workflow_repository.create(
-                session=session, data={"owner_id": user_id, **data.model_dump()}
-            )
+        workflow = await self._workflow_repository.create(
+            session=session, data={"owner_id": user_id, **data.model_dump()}
         )
+        await session.commit()
+        return WorkflowResponse.model_validate(workflow)
 
     async def get_workflows(
         self, session: AsyncSession, user_id: int
@@ -119,6 +119,7 @@ class WorkflowUsecase:
         if not workflow:
             raise WorkflowNotFoundError
 
+        await session.commit()
         return WorkflowResponse.model_validate(workflow)
 
     async def delete_workflow(
@@ -140,3 +141,4 @@ class WorkflowUsecase:
         )
         if not deleted:
             raise WorkflowNotFoundError
+        await session.commit()

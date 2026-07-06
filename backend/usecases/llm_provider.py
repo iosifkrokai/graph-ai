@@ -81,6 +81,7 @@ class LLMProviderUsecase:
             await session.rollback()
             raise LLMProviderAlreadyExistsError from exc
 
+        await session.commit()
         return LLMProviderResponse.model_validate(created)
 
     async def get_llm_providers(
@@ -177,6 +178,7 @@ class LLMProviderUsecase:
         if not llm_provider:
             raise LLMProviderNotFoundError
 
+        await session.commit()
         return LLMProviderResponse.model_validate(llm_provider)
 
     async def delete_llm_provider(
@@ -198,6 +200,7 @@ class LLMProviderUsecase:
         )
         if not deleted:
             raise LLMProviderNotFoundError
+        await session.commit()
 
     async def get_models(
         self, session: AsyncSession, provider_id: int, user_id: int

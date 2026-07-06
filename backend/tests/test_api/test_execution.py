@@ -1507,6 +1507,47 @@ class TestExecutionReaper(BaseTestCase):
             pytest.fail("Long-running-but-active execution should stay RUNNING")
 
     @pytest.mark.asyncio
+    async def test_reenqueues_only_stale_created_executions(self) -> None:
+        """A CREATED execution stuck past the timeout is re-enqueued once."""
+        user, _ = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        stale_started = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(
+            seconds=300
+        )
+        stale = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            status=ExecutionStatus.CREATED,
+            started_at=stale_started,
+        )
+        fresh = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            status=ExecutionStatus.CREATED,
+        )
+        stale_id = stale.id
+        fresh_id = fresh.id
+
+        re_enqueued: list[int] = []
+
+        async def re_enqueue(execution_id: int) -> None:
+            re_enqueued.append(execution_id)
+
+        reaped = await ExecutionUsecase().reap_stuck_executions(
+            session=self.session, re_enqueue=re_enqueue
+        )
+
+        expected_reaped = 1
+        if reaped != expected_reaped:
+            pytest.fail("Expected exactly one stale CREATED execution to be reaped")
+        if re_enqueued != [stale_id]:
+            pytest.fail("re_enqueue should be called once with the stale execution")
+        if fresh_id in re_enqueued:
+            pytest.fail("A fresh CREATED execution should not be re-enqueued")
+
+    @pytest.mark.asyncio
     async def test_status_cas_prevents_clobber(self) -> None:
         """A finalized execution cannot be re-finalized (reaper/worker anti-clobber)."""
         user, _ = await self.create_user_and_get_token()

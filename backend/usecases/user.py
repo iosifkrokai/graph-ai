@@ -27,3 +27,4 @@ class UserUsecase:
         deleted = await self._user_repository.delete_by(session=session, id=user_id)
         if not deleted:
             raise UserNotFoundError
+        await session.commit()
