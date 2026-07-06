@@ -1449,7 +1449,7 @@ class TestExecutionReaper(BaseTestCase):
         workflow = await WorkflowFactory.create_async(
             session=self.session, owner_id=user["id"]
         )
-        stale_started = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(hours=2)
+        stale_started = datetime.now(tz=UTC) - timedelta(hours=2)
         stale = await ExecutionFactory.create_async(
             session=self.session,
             workflow_id=workflow.id,
@@ -1486,13 +1486,13 @@ class TestExecutionReaper(BaseTestCase):
         workflow = await WorkflowFactory.create_async(
             session=self.session, owner_id=user["id"]
         )
-        old_start = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(hours=2)
+        old_start = datetime.now(tz=UTC) - timedelta(hours=2)
         still_active = await ExecutionFactory.create_async(
             session=self.session,
             workflow_id=workflow.id,
             status=ExecutionStatus.RUNNING,
             started_at=old_start,
-            heartbeat_at=datetime.now(tz=UTC).replace(tzinfo=None),
+            heartbeat_at=datetime.now(tz=UTC),
         )
         active_id = still_active.id
 
@@ -1513,9 +1513,7 @@ class TestExecutionReaper(BaseTestCase):
         workflow = await WorkflowFactory.create_async(
             session=self.session, owner_id=user["id"]
         )
-        stale_started = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(
-            seconds=300
-        )
+        stale_started = datetime.now(tz=UTC) - timedelta(seconds=300)
         stale = await ExecutionFactory.create_async(
             session=self.session,
             workflow_id=workflow.id,

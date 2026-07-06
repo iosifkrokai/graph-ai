@@ -254,8 +254,21 @@ Second pass (closed out everything remaining):
       existing `_job_id=f"execution:{id}"` dedup makes a duplicate enqueue for
       an execution that's actually already running a no-op. `worker.py`'s
       cron function builds the real callback from `ctx["redis"]`.
-- [ ] **Timezone-aware datetime columns** (`DateTime(timezone=True)` everywhere) —
-      correctness today depends on the DB session timezone being UTC.
+- [x] **Timezone-aware datetime columns** — `db/models/base.py`'s shared
+      `Base` now declares `type_annotation_map = {datetime:
+      DateTime(timezone=True)}`, so every `Mapped[datetime]` column across
+      all models (`users`/`workflows`/`workflow_versions`.created_at/
+      updated_at, `executions`.started_at/finished_at/heartbeat_at,
+      `node_executions`.started_at/finished_at) is `timestamptz` instead of a
+      naive `timestamp` whose correctness silently depended on the DB
+      session timezone matching the app's UTC assumption. Migration
+      `6b2f9a4c1e73` reinterprets the existing naive values as UTC
+      (`ALTER COLUMN ... USING col AT TIME ZONE 'UTC'`, metadata-only, no
+      data rewrite); verified both directions against the real dev DB.
+      `usecases/execution.py` no longer strips tzinfo off `datetime.now(tz=UTC)`
+      before persisting — the tz-aware value round-trips correctly now, so
+      the `.replace(tzinfo=None)` dance is gone from all 8 call sites (and
+      the matching test fixtures in `test_execution.py`).
 - [x] **Added missing unique constraints** — `edges(workflow_id,
       source_node_id, target_node_id)` and `llm_providers(user_id, name)` no
       longer allow silent duplicates. New domain errors

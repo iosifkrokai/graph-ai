@@ -273,7 +273,7 @@ class ExecutionUsecase:
         if workflow is None:
             raise WorkflowNotFoundError
 
-        claim_time = datetime.now(tz=UTC).replace(tzinfo=None)
+        claim_time = datetime.now(tz=UTC)
         claimed = await self._execution_repository.update_status_if(
             session=session,
             execution_id=execution_id,
@@ -369,7 +369,7 @@ class ExecutionUsecase:
             CREATED).
 
         """
-        now = datetime.now(tz=UTC).replace(tzinfo=None)
+        now = datetime.now(tz=UTC)
         cutoff = now - timedelta(seconds=older_than_seconds)
         running = await self._execution_repository.get_all(
             session=session, status=ExecutionStatus.RUNNING
@@ -921,7 +921,7 @@ class ExecutionUsecase:
             session=session,
             run_context=run_context,
             node_id=node_id,
-            started_at=datetime.now(tz=UTC).replace(tzinfo=None),
+            started_at=datetime.now(tz=UTC),
             outcome=_NodeOutcome(status=ExecutionStatus.SKIPPED),
         )
 
@@ -1279,7 +1279,7 @@ class ExecutionUsecase:
             BaseError: If the node fails after exhausting its attempts.
 
         """
-        started_at = datetime.now(tz=UTC).replace(tzinfo=None)
+        started_at = datetime.now(tz=UTC)
         for attempt in range(1, self._max_node_attempts + 1):
             try:
                 result = await self._run_node_once(
@@ -1427,14 +1427,14 @@ class ExecutionUsecase:
                 "output": _truncate_for_storage(outcome.output),
                 "error": outcome.error,
                 "started_at": started_at,
-                "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
+                "finished_at": datetime.now(tz=UTC),
             },
         )
         # A node just completed real work: bump the heartbeat so the reaper
         # can tell this run is still progressing, not stalled.
         await self._execution_repository.update_by(
             session=session,
-            data={"heartbeat_at": datetime.now(tz=UTC).replace(tzinfo=None)},
+            data={"heartbeat_at": datetime.now(tz=UTC)},
             id=run_context.execution_id,
         )
         await session.commit()
@@ -1473,7 +1473,7 @@ class ExecutionUsecase:
                 "status": ExecutionStatus.SUCCESS,
                 "output_data": output_data.model_dump(),
                 "error": None,
-                "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
+                "finished_at": datetime.now(tz=UTC),
             },
         )
         if not won:
@@ -1503,7 +1503,7 @@ class ExecutionUsecase:
             data={
                 "status": ExecutionStatus.FAILED,
                 "error": error,
-                "finished_at": datetime.now(tz=UTC).replace(tzinfo=None),
+                "finished_at": datetime.now(tz=UTC),
             },
         )
         if not won:
