@@ -220,6 +220,7 @@ async def poll_telegram_updates(
                     data={"last_update_id": max_update_id},
                     id=bot.id,
                 )
+                await session.commit()
 
 
 def _nodes_triggered_by(bot: "TelegramBot", input_nodes: list["Node"]) -> list["Node"]:
