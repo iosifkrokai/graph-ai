@@ -1,6 +1,7 @@
 """Web search node handler."""
 
-from typing import Any
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -16,11 +17,110 @@ from schemas import (
     NodeGraphSpec,
 )
 
+# DuckDuckGo's lite HTML endpoint returns real organic results (title, URL,
+# snippet) and needs no API key, unlike the old Instant Answer API this
+# replaced — that one only ever populated `AbstractText`/`RelatedTopics` for
+# a small set of "definition"-style queries and came back empty for most
+# real searches. It blocks requests without a browser-like User-Agent.
+_SEARCH_URL = "https://lite.duckduckgo.com/lite/"
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+
+
+class _SearchResult:
+    """One parsed organic search result."""
+
+    __slots__ = ("href", "snippet", "title")
+
+    def __init__(self, title: str, href: str) -> None:
+        """Start a result with its title and target URL; snippet fills in later."""
+        self.title = title
+        self.href = href
+        self.snippet: str | None = None
+
+
+class _DuckDuckGoLiteParser(HTMLParser):
+    """Extracts organic results from a DuckDuckGo lite results page.
+
+    Sponsored results are wrapped in `<tr class="result-sponsored">` and are
+    skipped entirely; organic result links carry `class="result-link"` and
+    their snippet lives in a sibling `<td class="result-snippet">`.
+    """
+
+    def __init__(self) -> None:
+        """Initialize parser state."""
+        super().__init__(convert_charrefs=True)
+        self.results: list[_SearchResult] = []
+        self._in_sponsored_row = False
+        self._capturing_title = False
+        self._capturing_snippet = False
+        self._title_parts: list[str] = []
+        self._snippet_parts: list[str] = []
+        self._pending_href: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Track sponsored rows and the start of a title/snippet element."""
+        attr_map = dict(attrs)
+        if tag == "tr":
+            classes = (attr_map.get("class") or "").split()
+            self._in_sponsored_row = "result-sponsored" in classes
+            return
+        if self._in_sponsored_row:
+            return
+
+        classes = (attr_map.get("class") or "").split()
+        if tag == "a" and "result-link" in classes:
+            self._capturing_title = True
+            self._title_parts = []
+            self._pending_href = attr_map.get("href")
+        elif tag == "td" and "result-snippet" in classes:
+            self._capturing_snippet = True
+            self._snippet_parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        """Finalize a title/snippet element once its closing tag is seen."""
+        if tag == "a" and self._capturing_title:
+            self._capturing_title = False
+            title = "".join(self._title_parts).strip()
+            href = self._resolve_href(self._pending_href)
+            self._pending_href = None
+            if title and href:
+                self.results.append(_SearchResult(title=title, href=href))
+        elif tag == "td" and self._capturing_snippet:
+            self._capturing_snippet = False
+            snippet = "".join(self._snippet_parts).strip()
+            if snippet:
+                for result in reversed(self.results):
+                    if result.snippet is None:
+                        result.snippet = snippet
+                        break
+
+    def handle_data(self, data: str) -> None:
+        """Accumulate text for whichever element is currently being captured."""
+        if self._capturing_title:
+            self._title_parts.append(data)
+        elif self._capturing_snippet:
+            self._snippet_parts.append(data)
+
+    @staticmethod
+    def _resolve_href(href: str | None) -> str | None:
+        """Unwrap DuckDuckGo's `/l/?uddg=...` redirect to the real target URL."""
+        if not href:
+            return None
+        if href.startswith("//"):
+            href = f"https:{href}"
+        parsed = urlparse(href)
+        if parsed.path == "/l/":
+            target = parse_qs(parsed.query).get("uddg", [None])[0]
+            return target or None
+        return href
+
 
 class WebSearchNodeHandler:
     """Handler for web search nodes."""
 
-    _SEARCH_URL = "https://api.duckduckgo.com/"
     _MIN_RESULTS = 1
     _MAX_RESULTS = 10
 
@@ -28,11 +128,11 @@ class WebSearchNodeHandler:
         """Run one web search node and return aggregated text results."""
         query = self._build_query(context)
         max_results = self._read_max_results(context)
-        payload = await self._search(query)
-        lines = self._format_results(payload=payload, max_results=max_results)
+        results = await self._search(query)
+        lines = self._format_results(results=results, max_results=max_results)
 
         if lines:
-            return NodeExecutionResult(output="\n".join(lines))
+            return NodeExecutionResult(output="\n\n".join(lines))
         return NodeExecutionResult(output=f"No search results found for: {query}")
 
     def _build_query(self, context: NodeExecutionContext) -> str:
@@ -53,21 +153,15 @@ class WebSearchNodeHandler:
 
         return max_results
 
-    async def _search(self, query: str) -> dict[str, Any]:
-        """Execute DuckDuckGo search request."""
+    async def _search(self, query: str) -> list[_SearchResult]:
+        """Fetch and parse organic results from DuckDuckGo's lite endpoint."""
         try:
-            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.get(
-                    self._SEARCH_URL,
-                    params={
-                        "q": query,
-                        "format": "json",
-                        "no_html": 1,
-                        "skip_disambig": 1,
-                    },
-                )
+            async with httpx.AsyncClient(
+                timeout=DEFAULT_TIMEOUT, headers={"User-Agent": _USER_AGENT}
+            ) as client:
+                response = await client.get(_SEARCH_URL, params={"q": query})
                 response.raise_for_status()
-                payload = response.json()
+                html = response.text
         except httpx.TimeoutException as exc:
             message = "Web search request timed out while running execution"
             raise WebSearchConnectionError(message=message) from exc
@@ -79,86 +173,24 @@ class WebSearchNodeHandler:
             raise WebSearchConnectionError(message=message) from exc
         except httpx.HTTPError as exc:
             raise WebSearchConnectionError from exc
-        except ValueError as exc:
-            message = "Web search provider returned malformed JSON"
-            raise WebSearchConnectionError(message=message) from exc
 
-        if not isinstance(payload, dict):
-            message = "Web search provider returned invalid payload format"
-            raise WebSearchConnectionError(message=message)
+        parser = _DuckDuckGoLiteParser()
+        parser.feed(html)
+        return parser.results
 
-        return payload
-
-    def _format_results(self, payload: dict[str, Any], max_results: int) -> list[str]:
-        """Build numbered lines from DuckDuckGo payload."""
-        items: list[tuple[str, str | None]] = []
-        abstract = payload.get("AbstractText")
-        if isinstance(abstract, str) and abstract.strip():
-            abstract_url = payload.get("AbstractURL")
-            items.append(
-                (
-                    abstract.strip(),
-                    abstract_url.strip()
-                    if isinstance(abstract_url, str) and abstract_url.strip()
-                    else None,
-                )
-            )
-
-        items.extend(self._extract_related_topics(payload.get("RelatedTopics")))
-
+    def _format_results(
+        self, results: list[_SearchResult], max_results: int
+    ) -> list[str]:
+        """Build numbered title/snippet/URL blocks from parsed results."""
         lines: list[str] = []
-        for index, (text, url) in enumerate(items[:max_results], start=1):
-            suffix = f" ({url})" if url else ""
-            lines.append(f"{index}. {text}{suffix}")
+        for index, result in enumerate(results[:max_results], start=1):
+            block = [f"{index}. {result.title}"]
+            if result.snippet:
+                block.append(f"   {result.snippet}")
+            block.append(f"   {result.href}")
+            lines.append("\n".join(block))
 
         return lines
-
-    def _extract_related_topics(self, value: object) -> list[tuple[str, str | None]]:
-        """Extract textual items from RelatedTopics, including nested groups."""
-        if not isinstance(value, list):
-            return []
-
-        entries: list[dict[str, Any]] = []
-        for entry in value:
-            entry_dict = self._to_str_key_dict(entry)
-            if entry_dict is not None:
-                entries.append(entry_dict)
-
-        items: list[tuple[str, str | None]] = []
-        stack = entries.copy()
-
-        while stack:
-            entry = stack.pop()
-            topics = entry.get("Topics")
-            if isinstance(topics, list):
-                for item in topics:
-                    topic_dict = self._to_str_key_dict(item)
-                    if topic_dict is not None:
-                        stack.append(topic_dict)
-                continue
-
-            text = entry.get("Text")
-            if not isinstance(text, str) or not text.strip():
-                continue
-
-            first_url = entry.get("FirstURL")
-            url = (
-                first_url.strip()
-                if isinstance(first_url, str) and first_url.strip()
-                else None
-            )
-            items.append((text.strip(), url))
-
-        return items
-
-    def _to_str_key_dict(self, value: object) -> dict[str, Any] | None:
-        """Convert unknown object to dictionary with string keys."""
-        if not isinstance(value, dict):
-            return None
-
-        return {
-            key: item_value for key, item_value in value.items() if isinstance(key, str)
-        }
 
 
 def _build_handler(deps: NodeHandlerDeps) -> WebSearchNodeHandler:

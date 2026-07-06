@@ -309,23 +309,25 @@ class TestExecutionCreate(BaseTestCase):
             """Dummy HTTP response for web search tests."""
 
             status_code = HTTPStatus.OK
-            text = ""
+            text = (
+                "<table>"
+                '<tr class="result-sponsored"><td>'
+                '<a rel="nofollow" '
+                'href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fads.example" '
+                "class='result-link'>Sponsored Ad Result</a>"
+                "</td></tr>"
+                "<tr><td>"
+                '<a rel="nofollow" '
+                'href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fduckduckgo.com" '
+                "class='result-link'>DuckDuckGo</a>"
+                "</td></tr>"
+                "<tr><td class='result-snippet'>"
+                "DuckDuckGo is a privacy-focused search engine."
+                "</td></tr></table>"
+            )
 
             def raise_for_status(self) -> None:
                 """Keep successful status."""
-
-            def json(self) -> dict:
-                """Return mock DuckDuckGo payload."""
-                return {
-                    "AbstractText": "DuckDuckGo is a privacy-focused search engine.",
-                    "AbstractURL": "https://duckduckgo.com/about",
-                    "RelatedTopics": [
-                        {
-                            "Text": "DuckDuckGo Search",
-                            "FirstURL": "https://duckduckgo.com",
-                        }
-                    ],
-                }
 
         class DummyAsyncClient:
             """Dummy async client that returns fixed payload."""
@@ -406,6 +408,8 @@ class TestExecutionCreate(BaseTestCase):
         )
         if not isinstance(output_value, str) or "DuckDuckGo" not in output_value:
             pytest.fail("Execution output does not contain expected web search text")
+        if not isinstance(output_value, str) or "Sponsored Ad Result" in output_value:
+            pytest.fail("Sponsored results should be filtered out of web search output")
 
     @pytest.mark.asyncio
     async def test_web_search_runtime_error(

@@ -366,14 +366,33 @@ Second pass (closed out everything remaining):
 
 ## Phase 6 — Node handler depth (usability, not new node types)
 
-- [ ] **"Web Search" isn't a real web search** — it only reads DuckDuckGo's
-      Instant Answer API (`AbstractText`/`RelatedTopics`), which is empty for most
-      real queries. Use the HTML/lite results endpoint or make the provider
-      configurable.
-- [ ] **HTTP node: unencoded `{{input}}` URL substitution** breaks any value with
-      spaces/`&`/`#`; response truncation at 10k chars has no marker and ignores
-      content-type. URL-encode on substitution, add a truncation marker, allow
-      `{{input}}` in headers.
+- [x] **"Web Search" isn't a real web search** — replaced the near-always-empty
+      Instant Answer API with DuckDuckGo's HTML lite endpoint
+      (`https://lite.duckduckgo.com/lite/`, needs a browser-like User-Agent or
+      it serves a bot-check page instead of results). `nodes/web_search.py`
+      parses the results page with a small `html.parser.HTMLParser` subclass
+      that pairs each `result-link` title with its sibling `result-snippet`
+      text and unwraps DuckDuckGo's `/l/?uddg=...` redirect to the real
+      target URL, while skipping `<tr class="result-sponsored">` rows
+      entirely so ads never leak into node output. Verified live against the
+      real endpoint during development (real queries now return ~10 organic
+      results with title/snippet/URL, vs. the old API's empty
+      `AbstractText`/`RelatedTopics` for the same queries).
+- [x] **HTTP node: unencoded `{{input}}` URL substitution** — added
+      `render_input_url_encoded` (`nodes/rendering.py`) alongside the
+      existing `render_input`: only the substituted upstream text is
+      percent-encoded via `urllib.parse.quote`, so a value with spaces/`&`/`#`
+      can no longer corrupt the surrounding URL's query-string structure
+      (the rest of the template — scheme, path separators, literal `?`/`&`/`=`
+      — is left untouched). `_read_url` in `nodes/http_request.py` now uses
+      it. Response truncation now carries a visible
+      `[truncated: N chars total]` marker (mirroring the same pattern
+      `_truncate_for_storage` already uses for node output storage), and
+      `{{input}}` now also renders inside header values (`_read_headers`),
+      not just the URL/body. Content-type-aware truncation was considered
+      and skipped — the node pipeline is text-only end to end, so there's no
+      binary/structured-response path that character truncation could
+      corrupt differently than it already does for text.
 - [ ] **Template node: single exact-match `{{input}}`** — `{{ input }}` or
       `{{INPUT}}` silently drops the entire upstream text with no error, and
       there's no way to reference an individual parent by index.

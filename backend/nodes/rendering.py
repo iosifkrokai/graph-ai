@@ -1,5 +1,7 @@
 """Shared text-rendering helpers for node handlers."""
 
+from urllib.parse import quote
+
 from nodes.base import NodeExecutionContext
 
 INPUT_PLACEHOLDER = "{{input}}"
@@ -32,3 +34,22 @@ def render_input(text: str, context: NodeExecutionContext) -> str:
 
     """
     return text.replace(INPUT_PLACEHOLDER, upstream_text(context))
+
+
+def render_input_url_encoded(text: str, context: NodeExecutionContext) -> str:
+    """Substitute ``{{input}}`` for use inside a URL, percent-encoding the value.
+
+    Only the substituted upstream text is percent-encoded — the rest of the
+    template (scheme, path separators, `?`/`&`/`=` in the query string) is
+    left untouched, so a value containing spaces, `&`, or `#` can't corrupt
+    the surrounding URL structure.
+
+    Args:
+        text: URL template possibly containing ``{{input}}``.
+        context: Node execution context.
+
+    Returns:
+        The rendered URL.
+
+    """
+    return text.replace(INPUT_PLACEHOLDER, quote(upstream_text(context), safe=""))

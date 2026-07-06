@@ -10,7 +10,7 @@ from enums import HttpMethod, NodeType, PortType, ValidatorType
 from exceptions import ExecutionGraphValidationError, HTTPRequestError
 from nodes.base import NodeExecutionContext, NodeExecutionResult
 from nodes.definition import NodeDefinition, NodeHandlerDeps
-from nodes.rendering import render_input, upstream_text
+from nodes.rendering import render_input, render_input_url_encoded, upstream_text
 from schemas import (
     NodeFieldSpec,
     NodeFieldUI,
@@ -21,6 +21,18 @@ from utils.network import blocked_url_reason
 
 _MAX_RESPONSE_CHARS = 10_000
 _ALLOWED_SCHEMES = ("http://", "https://")
+
+
+def _truncate_response(text: str) -> str:
+    """Cap a response body's length, with a visible truncation marker.
+
+    Without a marker, a truncated response looks identical to a genuinely
+    short one — the caller (or an LLM downstream) has no way to tell the
+    data was cut off.
+    """
+    if len(text) <= _MAX_RESPONSE_CHARS:
+        return text
+    return f"{text[:_MAX_RESPONSE_CHARS]}\n\n[truncated: {len(text)} chars total]"
 
 
 class HTTPRequestNodeHandler:
@@ -51,16 +63,21 @@ class HTTPRequestNodeHandler:
         payload = await self._request(
             method=method, url=url, headers=headers, body=body
         )
-        return NodeExecutionResult(output=payload[:_MAX_RESPONSE_CHARS])
+        return NodeExecutionResult(output=_truncate_response(payload))
 
     def _read_url(self, context: NodeExecutionContext) -> str:
-        """Read, render, and validate the target URL."""
+        """Read, render, and validate the target URL.
+
+        The ``{{input}}`` substitution is percent-encoded (see
+        `render_input_url_encoded`) so upstream text containing spaces,
+        ``&``, or ``#`` can't corrupt the surrounding URL structure.
+        """
         raw_url = context.node_data.get("url")
         if not isinstance(raw_url, str) or not raw_url:
             message = "HTTP request node requires a URL"
             raise ExecutionGraphValidationError(message=message)
 
-        url = render_input(raw_url, context).strip()
+        url = render_input_url_encoded(raw_url, context).strip()
         if not url.startswith(_ALLOWED_SCHEMES):
             message = "HTTP request node requires an http(s) URL"
             raise ExecutionGraphValidationError(message=message)
@@ -76,7 +93,7 @@ class HTTPRequestNodeHandler:
             raise ExecutionGraphValidationError(message=message) from exc
 
     def _read_headers(self, context: NodeExecutionContext) -> dict[str, str]:
-        """Read and validate request headers from a JSON object field."""
+        """Read, template, and validate request headers from a JSON object field."""
         raw_headers = context.node_data.get("headers")
         if raw_headers is None or (
             isinstance(raw_headers, str) and not raw_headers.strip()
@@ -97,7 +114,10 @@ class HTTPRequestNodeHandler:
         ):
             message = "HTTP request node headers must be a JSON object of strings"
             raise ExecutionGraphValidationError(message=message)
-        return cast("dict[str, str]", parsed)
+        typed_headers = cast("dict[str, str]", parsed)
+        return {
+            name: render_input(value, context) for name, value in typed_headers.items()
+        }
 
     def _read_body(
         self, context: NodeExecutionContext, method: HttpMethod
@@ -189,7 +209,7 @@ DEFINITION = NodeDefinition(
                 widget=NodeFieldWidget.TEXT,
                 label="URL",
                 placeholder="https://api.example.com/search?q={{input}}",
-                help="Supports {{input}} for the upstream text.",
+                help="Supports {{input}} for the upstream text (URL-encoded).",
             ),
             default="",
         ),
@@ -202,7 +222,8 @@ DEFINITION = NodeDefinition(
                 label="Headers (JSON)",
                 placeholder='{"Authorization": "Bearer ...", '
                 '"Content-Type": "application/json"}',
-                help="Optional JSON object of header name/value strings.",
+                help="Optional JSON object of header name/value strings. "
+                "Supports {{input}} in values.",
             ),
         ),
         NodeFieldSpec(

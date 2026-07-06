@@ -261,6 +261,90 @@ class TestHTTPRequestNode:
                 )
             )
 
+    @pytest.mark.asyncio
+    async def test_url_input_substitution_is_percent_encoded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Upstream text with spaces/&/# can't corrupt the URL's structure."""
+        monkeypatch.setattr("nodes.http_request.httpx.AsyncClient", _DummyHTTPClient)
+        handler = HTTPRequestNodeHandler()
+        await handler.execute(
+            _context(
+                {"url": "https://api.example.com/?q={{input}}", "method": "get"},
+                parent_values=["cats & dogs #1"],
+            )
+        )
+        expected_url = "https://api.example.com/?q=cats%20%26%20dogs%20%231"
+        if _DummyHTTPClient.calls.get("url") != expected_url:
+            pytest.fail("Upstream text was not percent-encoded before substitution")
+
+    @pytest.mark.asyncio
+    async def test_header_values_render_input_placeholder(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """{{input}} in a header value is substituted like the URL/body."""
+        monkeypatch.setattr("nodes.http_request.httpx.AsyncClient", _DummyHTTPClient)
+        handler = HTTPRequestNodeHandler()
+        await handler.execute(
+            _context(
+                {
+                    "url": "https://api.example.com",
+                    "method": "get",
+                    "headers": '{"X-Query": "{{input}}"}',
+                },
+                parent_values=["cats"],
+            )
+        )
+        if _DummyHTTPClient.calls.get("headers") != {"X-Query": "cats"}:
+            pytest.fail("{{input}} in a header value was not substituted")
+
+    @pytest.mark.asyncio
+    async def test_response_truncation_has_visible_marker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A response over the char cap is truncated with a visible marker."""
+
+        class _LongResponse:
+            status_code = 200
+            text = "x" * 10_050
+
+            def raise_for_status(self) -> None:
+                """Keep the successful status."""
+
+        class _LongResponseClient:
+            """Async httpx client returning a fixed over-cap response body."""
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                """Accept any httpx kwargs."""
+
+            async def __aenter__(self) -> Self:
+                """Enter the context manager."""
+                return self
+
+            async def __aexit__(self, *args: object) -> bool:
+                """Exit the context manager."""
+                return False
+
+            async def request(
+                self, method: str, url: str, **kwargs: object
+            ) -> _LongResponse:
+                """Return the fixed over-cap response."""
+                del method, url, kwargs
+                return _LongResponse()
+
+        monkeypatch.setattr("nodes.http_request.httpx.AsyncClient", _LongResponseClient)
+        handler = HTTPRequestNodeHandler()
+        result = await handler.execute(
+            _context({"url": "https://api.example.com", "method": "get"}, [])
+        )
+        if (
+            result.output is None
+            or "[truncated: 10050 chars total]" not in result.output
+        ):
+            pytest.fail("Truncated response should carry a visible marker")
+        if len(result.output) >= len(_LongResponse.text):
+            pytest.fail("Response should actually be truncated, not just marked")
+
 
 class TestConditionNode:
     """Tests for the condition/router node handler."""
