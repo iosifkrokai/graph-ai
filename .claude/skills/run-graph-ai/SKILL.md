@@ -10,10 +10,15 @@ that proxies `/api` to a **FastAPI backend** (`:5000`), backed by Postgres, Redi
 Qdrant, and (for LLM execution) Ollama + an ARQ worker. The whole stack runs via
 **docker compose** from the repo root.
 
-The interactive surface is the browser. Drive it headlessly with the committed
-Playwright driver: **`.claude/skills/run-graph-ai/driver.mjs`**. It registers a
-user through the real UI, lands on the workflow builder, creates a workflow, and
-writes screenshots to `.claude/skills/run-graph-ai/shots/`.
+Two committed harnesses drive it (both under `.claude/skills/run-graph-ai/`):
+
+- **`driver.mjs`** — headless Playwright. Registers a user through the real UI,
+  lands on the workflow builder, creates a workflow. With `--run` it also builds
+  an Input→LLM→Output graph and **executes it through the UI against the live LLM**,
+  screenshotting each step to `./shots/`.
+- **`smoke.mjs`** — no browser. Builds the same graph via the API and runs it to
+  completion, asserting the worker + Ollama produce output. The fast full-stack
+  "does the whole AI pipeline work" check.
 
 > All paths below are relative to the **repo root** (`<unit>/`).
 
@@ -32,15 +37,26 @@ cd -
 
 ## Build & launch the stack (agent path)
 
-`make run` (= `docker compose up --build`) boots **all** services including an
-Ollama container that pulls a ~1GB model — slow, and nothing in the core app
-depends on it being healthy. For a fast bring-up, build only the core services;
-add `ollama worker` later only when you need to actually execute an LLM node.
+Nothing in the core app `depends_on` Ollama, so for **UI/auth/API work** bring up
+just the core services — fast:
 
 ```bash
 cp .env.example .env                                             # compose reads .env
 docker compose up -d --build postgres redis qdrant backend frontend
 ```
+
+To **execute a workflow** (LLM node), also start `ollama` + `worker`. The `ollama`
+container pulls `qwen2.5:1.5b` (~1GB) on first boot — slow; wait for the model:
+
+```bash
+docker compose up -d --build ollama worker
+for i in $(seq 1 120); do
+  docker compose exec -T ollama ollama list 2>/dev/null | grep -qi qwen && { echo "model ready"; break; }
+  sleep 5
+done
+```
+
+(`make run` boots all of the above in the foreground in one shot.)
 
 Wait until both tiers answer (backend runs Alembic migrations on start, so give it a moment):
 
@@ -62,20 +78,37 @@ curl -s http://localhost:5000/health/readiness   # {"services":[postgres,redis,q
 
 ```bash
 cd .claude/skills/run-graph-ai
-node driver.mjs                    # register → builder → create workflow; screenshots to ./shots/
+node driver.mjs            # auth → builder → create workflow (core stack only)
+node driver.mjs --run     # ALSO builds Input→LLM→Output and runs it through the UI
 ```
 
-Expected output ends with `✓ driver flow complete` and three PNGs in `shots/`:
-`01-auth.png` (Pixel Flow Studio login), `02-builder.png`, `03-workflow.png`
-(canvas with the created "Demo Flow" and the node catalog). **Open the PNGs** —
-a blank page or `error.png` means a step failed.
+`node driver.mjs` ends with `✓ driver flow complete` and writes to `shots/`:
+`01-auth.png` (Pixel Flow Studio login), `02-builder.png`, `03-workflow.png`.
+
+`--run` additionally writes `04-graph.png` (the wired In→LLM→Out canvas) and
+`05-run.png` (the History chat showing the prompt and the **live LLM reply**,
+status `success`). It needs the full stack (ollama + worker, model pulled).
+**Open the PNGs** — a blank page or `error.png` means a step failed.
 
 Useful flags / env:
 
 ```bash
 node driver.mjs --email you@graph.ai --password secret123   # explicit creds
 BASE=http://localhost:3000 node driver.mjs                  # override target URL
+MODEL=qwen2.5:1.5b node driver.mjs --run                    # override the LLM model
 ```
+
+## Verify the full AI pipeline (no browser)
+
+Fastest proof the whole stack — API → worker → Ollama — actually runs a workflow:
+
+```bash
+cd .claude/skills/run-graph-ai
+node smoke.mjs             # → "✓ SMOKE PASSED — LLM output: \"Hello world!\""; non-zero exit on failure
+```
+
+It registers a user, creates an Ollama provider, builds Input→LLM→Output, queues an
+execution, and polls until `success`. Doubles as a CI-style smoke test.
 
 ## Direct invocation (backend, no browser)
 
@@ -123,6 +156,16 @@ the driver above to actually see/verify the UI.
 - **Nothing depends on Ollama being healthy.** The backend `depends_on` is only
   postgres/redis/qdrant, so the core stack comes up without waiting for the model
   pull. Ollama + the `worker` service are only needed to actually *run* an LLM node.
+- **An LLM provider's `base_url` is resolved from inside the backend container**, so
+  point Ollama at `http://ollama:11434` (the compose service name) — **not**
+  `localhost`. The provider `type` is `ollama` and `base_url` is required.
+- **The LLM node needs `llm_provider_id`, `model`, and `system_prompt`.** `model`
+  must be a tag Ollama has pulled (`qwen2.5:1.5b` by default; `docker compose exec
+  ollama ollama list` to check). An execution runs on the ARQ **worker** — if it
+  sits in `created`/`running` forever, the worker isn't up.
+- **Run requires exactly one Input + one Output node** (format `txt`) with a path
+  between them, and the workflow must be the *active* one — otherwise the Chat
+  "Send" button stays disabled with a reason shown under the textarea.
 - **The logged-in email is not in the top bar** — it lives inside the (closed)
   "Profile" dropdown. The driver waits on the top-bar **"Settings"** button as the
   post-auth signal, not the email text.
@@ -146,4 +189,7 @@ the driver above to actually see/verify the UI.
   check `shots/error.png`. Pass a fresh `--email` if needed.
 - **`readiness` returns 503 / a service `false`** → that dependency isn't up yet;
   `docker compose ps` and re-check. Backend logs: `docker compose logs backend`.
+- **Execution stuck in `created`/`running`** (smoke.mjs or `--run` times out) → the
+  `worker` isn't running (`docker compose ps worker`), or the model isn't pulled
+  (`docker compose exec ollama ollama list`). Worker logs: `docker compose logs worker`.
 - **Port already allocated** → an old stack is running: `docker compose down` first.

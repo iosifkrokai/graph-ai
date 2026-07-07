@@ -78,8 +78,71 @@ async function main() {
   await page.waitForTimeout(500)
   await shot(page, '03-workflow')
 
+  if (process.argv.includes('--run')) {
+    await runWorkflow(page)
+  }
+
   console.log('✓ driver flow complete')
   await browser.close()
+}
+
+// Build an Input→LLM→Output graph via the app's own /api proxy (using the
+// logged-in token), then drive the History → Chat panel to actually execute it
+// against Ollama + the ARQ worker, and screenshot the streamed LLM response.
+// Requires the full stack: ollama (model pulled) + worker running.
+async function runWorkflow(page) {
+  const model = process.env.MODEL ?? 'qwen2.5:1.5b'
+  const ollamaUrl = process.env.OLLAMA_URL ?? 'http://ollama:11434'
+
+  console.log('→ build Input→LLM→Output graph via /api')
+  const wfName = `UI Run ${process.env.STAMP ?? process.pid}`
+  // All requests run in the page so they reuse localStorage token + the /api proxy.
+  const built = await page.evaluate(
+    async ({ wfName, model, ollamaUrl }) => {
+      const token = localStorage.getItem('graph_ai_token')
+      const call = async (path, body) => {
+        const res = await fetch(`/api${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) throw new Error(`${path} → ${res.status} ${await res.text()}`)
+        return res.json()
+      }
+      const prov = await call('/llm-providers', { name: 'Local Ollama', type: 'ollama', base_url: ollamaUrl, config: {} })
+      const wf = await call('/workflows', { name: wfName })
+      const node = (type, data, x) => call('/nodes', { workflow_id: wf.id, type, data, position_x: x, position_y: 120 })
+      const input = await node('input', { label: 'In', format: 'txt' }, 80)
+      const llm = await node('llm', { label: 'LLM', llm_provider_id: prov.id, model, system_prompt: 'You are concise.' }, 380)
+      const output = await node('output', { label: 'Out', format: 'txt' }, 680)
+      await call('/edges', { workflow_id: wf.id, source_node_id: input.id, target_node_id: llm.id })
+      await call('/edges', { workflow_id: wf.id, source_node_id: llm.id, target_node_id: output.id })
+      return { wfId: wf.id, wfName }
+    },
+    { wfName, model, ollamaUrl },
+  )
+
+  console.log('→ reload and select the workflow')
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.getByRole('button', { name: built.wfName, exact: true }).click()
+  // Wait for the canvas to render the three nodes (ReactFlow node labels).
+  await page.getByText('LLM', { exact: false }).first().waitFor({ timeout: 10000 })
+  await page.waitForTimeout(800)
+  await shot(page, '04-graph')
+
+  console.log('→ open History and run the flow')
+  await page.getByRole('button', { name: 'History', exact: true }).click()
+  const box = page.locator('textarea').first()
+  await box.waitFor({ timeout: 10000 })
+  await box.fill('Say hello in 3 words.')
+  await page.getByRole('button', { name: /^Send$/ }).click()
+
+  // The response bubble fills once the worker + Ollama finish (CPU: give it time).
+  console.log('→ wait for the LLM response')
+  await page.getByText('success', { exact: false }).first().waitFor({ timeout: 90000 })
+  await page.waitForTimeout(1000)
+  await shot(page, '05-run')
+  console.log('✓ workflow executed through the UI')
 }
 
 main().catch(async (err) => {
