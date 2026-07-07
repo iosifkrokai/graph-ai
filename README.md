@@ -12,7 +12,7 @@
 
 # Graph AI
 
-Visual graph-based AI workflow builder — FastAPI + React + PostgreSQL.
+Visual graph-based AI workflow builder — FastAPI + ARQ · Postgres + Redis + Qdrant + React/Vite + Ollama.
 
 ## Requirements
 
