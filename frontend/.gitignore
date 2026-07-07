@@ -54,3 +54,6 @@ vite.config.ts.timestamp-*
 # Misc
 *.local
 .node_repl_history
+
+# Generated from backend OpenAPI (see sync-api-types skill) — regenerate, do not edit
+src/lib/api-types.gen.ts

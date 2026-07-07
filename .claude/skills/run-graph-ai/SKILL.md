@@ -142,6 +142,15 @@ the Docker daemon). Install `uv` first if missing (`pip install uv`), then:
 cd backend && uv sync && uv run pytest tests/ -q   # what `make back-test` runs → 200 passed (~1m45s)
 ```
 
+Fast-loop tips (from `backend/tests/conftest.py`):
+- Needs the **Docker daemon** (testcontainers). Only **Postgres is real** — Redis,
+  Qdrant, and ARQ are stubbed via dependency overrides, so most tests need no other
+  services.
+- The Postgres container is **session-scoped** — it starts **once per `pytest`
+  invocation**, not per test. So select a subset in a **single** call rather than many
+  small runs: `uv run pytest tests/test_api/test_node.py -k create` (per-test cost is
+  just schema `create_all`/`drop_all`, sub-second).
+
 ## Run (human path)
 
 `make run` boots the entire stack (incl. Ollama model pull + worker) in the
