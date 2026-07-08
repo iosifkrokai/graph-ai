@@ -364,7 +364,7 @@ Second pass (closed out everything remaining):
       upfront ownership check also moved onto its own short-lived session,
       dropping the plain `db.get_session` dependency from that route entirely.
 
-## Phase 6 — Node handler depth (usability, not new node types)
+## Phase 6 — Node handler depth (usability, not new node types) ✅ done
 
 - [x] **"Web Search" isn't a real web search** — replaced the near-always-empty
       Instant Answer API with DuckDuckGo's HTML lite endpoint
@@ -393,19 +393,101 @@ Second pass (closed out everything remaining):
       and skipped — the node pipeline is text-only end to end, so there's no
       binary/structured-response path that character truncation could
       corrupt differently than it already does for text.
-- [ ] **Template node: single exact-match `{{input}}`** — `{{ input }}` or
-      `{{INPUT}}` silently drops the entire upstream text with no error, and
-      there's no way to reference an individual parent by index.
-- [ ] **Vector Ingest has no real document intake** — the only way to feed a
-      document in today is pasting its full text through an Input node (or
-      fetching it via HTTP Request); there's no file upload (PDF/docx/etc.),
-      no way to browse/delete what's already in a Qdrant collection from the
-      UI, and no dedup on re-ingest (re-running the same document appends
-      duplicate chunks).
+- [x] **Template node: single exact-match `{{input}}`** — `_PLACEHOLDER_PATTERN`
+      (`nodes/rendering.py`) replaces the old literal `str.replace`: matching
+      is now case-insensitive and tolerant of internal whitespace, so
+      `{{ input }}`/`{{INPUT}}` substitute the same as `{{input}}` instead of
+      silently passing through unrendered. Also added an indexed form,
+      `{{input[N]}}` (0-based, same case/whitespace tolerance), to reference
+      one live parent by its deterministic ascending-parent-id position
+      instead of always getting every parent's output newline-joined; an
+      out-of-range index raises `ExecutionGraphValidationError` rather than
+      silently rendering empty. Both `render_input` and
+      `render_input_url_encoded` share the one regex, so Template and HTTP
+      Request (URL/headers/body) nodes picked up the fix and the new syntax
+      together. `TemplateNodeHandler`'s field help text now documents
+      `{{input[0]}}`/`{{input[1]}}` for multi-parent templates.
+- [x] **Vector Ingest document intake (upload, browse/delete, dedup)** — every
+      ingested chunk now carries a `source` payload field identifying its
+      document (`rag/ingest.py::ingest_document`, shared by the node handler
+      and the new upload endpoint); re-ingesting the same `(collection,
+      source)` deletes the prior chunks before inserting the new ones
+      (`rag/qdrant.py::delete_by_source`), so re-running a Vector Ingest node
+      or re-uploading a file replaces instead of duplicating — including
+      when the new version has fewer chunks than the old one. The node
+      gained an optional `source` field (defaults to the node's label).
+      **New "Vector Collections" Settings tab**
+      (`VectorCollectionSettings.tsx`, alongside LLM Providers/Telegram
+      Bots) lists every collection with its chunk count, expands to list
+      each document (source + chunk count) with inline delete, whole-collection
+      delete, and a file-upload form (`.pdf`/`.docx`/`.txt`/`.md`,
+      `rag/documents.py::extract_text` via `pypdf`/`python-docx`, 20 MB cap)
+      that ingests directly into any collection — bypassing the graph
+      entirely, so a document no longer has to be pasted through an Input
+      node. Backed by a new `/vector-collections` router (list/upload/
+      delete-document/delete-collection, `api/routers/vector.py`,
+      `usecases/vector.py`) — collections stay global/shared, matching the
+      feature's existing design. `lib/api.ts`'s shared `request()` helper
+      now skips forcing a JSON content-type when the body is `FormData`, so
+      the upload call reuses the same auth/error-handling path as every
+      other request instead of a bespoke fetch. Vector Ingest/Search node
+      handler tests (previously the only RAG test coverage) extended with
+      dedup-replace and multi-source coexistence cases; new
+      `tests/test_api/test_vector.py` covers the router end to end against
+      a shared in-memory `FakeQdrantClient` (`tests/fakes.py`) — no real
+      Qdrant server or fastembed model download needed in CI.
 
 ## Phase 7 — Product breadth (parallel track)
 
-- [ ] Undo/redo, copy-paste, multi-select, auto-layout in the graph editor.
+- [x] **Undo/redo, copy-paste, multi-select, auto-layout in the graph editor**
+      — nodes/edges get server-assigned IDs (nothing client-generated), so
+      undo/redo couldn't be a client-side snapshot diff; it's a stack of
+      reversible commands (`useUndoRedo.ts`) that replay the same
+      create/delete/update API calls, each command remembering its
+      *current* server ID across redo cycles since a redone "create" gets a
+      new one every time. `useGraphState.ts` builds a command after every
+      structural mutation (create/delete/move node, create/delete edge,
+      paste, auto-layout) and pushes it; deliberately does **not** cover
+      Inspector field-data edits (label/config), which keep their existing
+      autosave-on-change UX rather than sharing one linear undo stack with
+      graph-shape changes. Multi-node delete needed one atomic batch
+      command rather than N independently-composed per-node commands —
+      undoing a delete of two nodes that were connected *to each other*
+      requires recreating both nodes first (building a fresh
+      original-id → new-id map) before recreating the edge between them,
+      otherwise the second node's edge-recreation call references a
+      already-stale, still-deleted id (`makeDeleteNodesCommand`; caught by
+      the Playwright verification pass below, not by inspection). Deleting
+      a node's edges relies on the existing DB `ON DELETE CASCADE` — undo
+      is the only direction that needs to manually recreate them via
+      `createEdge`. Multi-select and edge-select both come from React
+      Flow's `onSelectionChange` (not each element's own `.selected`
+      field) so one code path drives both `selectedNodeIds`/
+      `selectedEdgeIds`; box-select is now plain left-drag
+      (`selectionMode`/`selectionOnDrag`), panning moved to middle/
+      right-mouse-drag (`panOnDrag={[1, 2]}`). Also fixed a related latent
+      bug while wiring the Delete key: React Flow v11's own
+      `deleteKeyCode` defaults to `'Backspace'`, and since `onNodesChange`
+      was already wired to blindly `applyNodeChanges` (including `remove`
+      changes), pressing Backspace with a node selected was silently
+      deleting it from local visual state *without* calling the delete API
+      — a pre-existing frontend/backend desync bug, now closed by setting
+      `deleteKeyCode={null}` and routing Delete/Backspace through the new
+      app-level keyboard handler (`App.tsx`) that properly calls the API
+      and records an undo command. Copy-paste uses an in-memory clipboard
+      (a ref, not the OS clipboard); paste remaps copied-internal-edges'
+      endpoints through a fresh id map, same pattern as delete-undo.
+      Auto-layout is a new `@dagrejs/dagre` dependency
+      (`lib/autoLayout.ts`, `rankdir: 'LR'` to match the existing
+      Input→...→Output convention), wired as one composite move-command so
+      it's a single undo step. New toolbar buttons: Undo/Redo (disabled
+      when the respective stack is empty)/Auto-layout
+      (`AppShell.tsx`). Verified via a real headless-browser pass (not just
+      lint/build): multi-select delete → undo → redo restores edges
+      correctly, copy/paste, auto-layout → undo restores exact prior
+      positions, box-select vs. right-drag-pan, toolbar buttons, and a
+      page reload after each step confirming state actually persisted
+      server-side rather than being a client-side illusion.
 - [ ] React Query in place of hand-rolled `useState`/`useEffect` data fetching.
 - [ ] Workflow template library, JSON export/import, duplication.
 - [ ] Frontend tests (Vitest + Testing Library) — currently zero.

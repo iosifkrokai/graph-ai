@@ -131,8 +131,13 @@ export type NodeFieldWidget =
   | 'provider'
   | 'model'
   | 'telegram_bot'
+  | 'vector_collection'
 
-export type NodeFieldDataSourceKind = 'llm_provider' | 'llm_model' | 'telegram_bot'
+export type NodeFieldDataSourceKind =
+  | 'llm_provider'
+  | 'llm_model'
+  | 'telegram_bot'
+  | 'vector_collection'
 
 export type PortType = 'text' | 'json' | 'file' | 'list'
 
@@ -224,6 +229,21 @@ export interface NodeExecutionResult {
   error: string | null
   started_at: string
   finished_at: string | null
+}
+
+export interface VectorCollection {
+  name: string
+  point_count: number
+}
+
+export interface VectorDocument {
+  source: string
+  chunk_count: number
+}
+
+export interface VectorUploadResult {
+  source: string
+  chunks_ingested: number
 }
 
 export interface ApiError {
