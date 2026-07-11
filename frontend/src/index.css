@@ -247,6 +247,121 @@ body {
   resize: vertical;
 }
 
+/* The native file picker button clashes with the pixel theme, so style the
+   ::file-selector-button pseudo-element to match .pixel-button.small. */
+.pixel-input[type='file'] {
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.pixel-input[type='file']::file-selector-button {
+  margin-right: 10px;
+  padding: 6px 10px;
+  border: 2px solid rgba(0, 0, 0, 0.6);
+  background: var(--accent);
+  color: #04110b;
+  font-family: "Press Start 2P", cursive;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6);
+  transition: background 0.15s ease;
+}
+
+.pixel-input[type='file']::file-selector-button:hover {
+  background: #5dffd0;
+}
+
+.pixel-processing {
+  border: 2px solid rgba(53, 255, 188, 0.4);
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+  animation: live-pulse 1.2s ease-in-out infinite;
+}
+
+/* Themed combobox used for the Collection field (node config + upload panel),
+   replacing the unstyleable native <datalist> popup. */
+.pixel-combobox {
+  position: relative;
+  width: 100%;
+}
+
+.pixel-combobox-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: #0b0d14;
+  border: 2px solid rgba(53, 255, 188, 0.4);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.6);
+}
+
+.pixel-combobox-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.pixel-combobox-option:hover {
+  background: rgba(53, 255, 188, 0.12);
+  color: var(--accent);
+}
+
+.pixel-combobox-option.create {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+
+.pixel-progress {
+  width: 100%;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: #0b0d14;
+  overflow: hidden;
+}
+
+.pixel-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+/* Before Ollama reports byte counts (e.g. "pulling manifest") there's no
+   percentage, so sweep an indeterminate bar instead of sitting at 0%. */
+.pixel-progress-fill.indeterminate {
+  width: 40%;
+  animation: pixel-progress-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes pixel-progress-sweep {
+  0% {
+    margin-left: -40%;
+  }
+  100% {
+    margin-left: 100%;
+  }
+}
+
 .pixel-label {
   display: flex;
   flex-direction: column;
@@ -280,6 +395,14 @@ body {
 .pixel-tab.is-active {
   background: rgba(53, 255, 188, 0.2);
   border-color: rgba(53, 255, 188, 0.5);
+}
+
+/* Vertical tab lists (e.g. settings sidebar) shouldn't stretch to fill the
+   column's height — that's what makes buttons grow/shrink as sibling
+   content changes size. Fix each tab to its own content height instead. */
+.pixel-tab-vertical {
+  flex: none;
+  text-align: left;
 }
 
 .pixel-card {

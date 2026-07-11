@@ -2,12 +2,13 @@ import { useState } from 'react'
 
 import type { ApiError } from '../lib/types'
 import { useLlmProviders } from '../hooks/useLlmProviders'
+import { OllamaModelsPanel } from './OllamaModelsPanel'
 
 interface ProviderSettingsProps {
   onError: (err: ApiError) => void
 }
 
-type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'openai_compatible'
+type ProviderType = 'ollama' | 'openai' | 'anthropic'
 
 interface ProviderTypeSpec {
   label: string
@@ -15,6 +16,10 @@ interface ProviderTypeSpec {
   requiresApiKey: boolean
 }
 
+// The OpenAI entry's base URL is just a prefill, not a hardcoded target —
+// pointing it at any other OpenAI-API-compatible endpoint (a local server,
+// a third-party host, ...) works the same way, so there's no separate
+// "OpenAI-compatible" provider type.
 const PROVIDER_TYPES: Record<ProviderType, ProviderTypeSpec> = {
   ollama: {
     label: 'Ollama',
@@ -31,19 +36,9 @@ const PROVIDER_TYPES: Record<ProviderType, ProviderTypeSpec> = {
     defaultBaseUrl: 'https://api.anthropic.com',
     requiresApiKey: true,
   },
-  openai_compatible: {
-    label: 'OpenAI-compatible',
-    defaultBaseUrl: '',
-    requiresApiKey: true,
-  },
 }
 
-const PROVIDER_TYPE_ORDER: ProviderType[] = [
-  'ollama',
-  'openai',
-  'anthropic',
-  'openai_compatible',
-]
+const PROVIDER_TYPE_ORDER: ProviderType[] = ['ollama', 'openai', 'anthropic']
 
 export function ProviderSettings({ onError }: ProviderSettingsProps) {
   const [name, setName] = useState('')
@@ -52,11 +47,13 @@ export function ProviderSettings({ onError }: ProviderSettingsProps) {
   const [baseUrlTouched, setBaseUrlTouched] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  const [expandedProviderId, setExpandedProviderId] = useState<number | null>(null)
 
   const spec = PROVIDER_TYPES[type]
   const apiKeyMissing = spec.requiresApiKey && !apiKey.trim()
   const {
     providers,
+    loading,
     creating,
     createProvider,
     removeProvider,
@@ -98,53 +95,81 @@ export function ProviderSettings({ onError }: ProviderSettingsProps) {
   async function handleDelete(providerId: number): Promise<void> {
     await removeProvider(providerId)
     setConfirmDeleteId(null)
+    if (expandedProviderId === providerId) {
+      setExpandedProviderId(null)
+    }
+  }
+
+  function toggleExpanded(providerId: number): void {
+    setExpandedProviderId((current) =>
+      current === providerId ? null : providerId,
+    )
   }
 
   return (
     <div>
       <div className="flex flex-col gap-3">
-        {providers.length === 0 ? (
+        {loading ? (
+          <div className="text-xs text-[var(--muted)]">Loading providers...</div>
+        ) : providers.length === 0 ? (
           <div className="text-xs text-[var(--muted)]">
             No providers yet.
           </div>
         ) : null}
         {providers.map((provider) => (
-          <div key={provider.id} className="pixel-card">
-            <div className="flex-1">
-              <div className="text-sm">{provider.name}</div>
-              <div className="text-xs text-[var(--muted)]">
-                {provider.type}
-                {provider.base_url ? ` · ${provider.base_url}` : ''}
+          <div key={provider.id} className="flex flex-col gap-2">
+            <div className="pixel-card">
+              <div className="flex-1">
+                <div className="text-sm">{provider.name}</div>
+                <div className="text-xs text-[var(--muted)]">
+                  {provider.type}
+                  {provider.base_url ? ` · ${provider.base_url}` : ''}
+                </div>
               </div>
-            </div>
-            {confirmDeleteId === provider.id ? (
-              <>
-                <button
-                  type="button"
-                  className="pixel-icon danger"
-                  title="Confirm delete"
-                  onClick={() => void handleDelete(provider.id)}
-                >
-                  ✓
-                </button>
+              {provider.type === 'ollama' ? (
                 <button
                   type="button"
                   className="pixel-icon"
-                  title="Cancel"
-                  onClick={() => setConfirmDeleteId(null)}
+                  title="Manage models"
+                  onClick={() => toggleExpanded(provider.id)}
                 >
-                  ✕
+                  Models
                 </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="pixel-icon danger"
-                onClick={() => setConfirmDeleteId(provider.id)}
-              >
-                Del
-              </button>
-            )}
+              ) : null}
+              {confirmDeleteId === provider.id ? (
+                <>
+                  <button
+                    type="button"
+                    className="pixel-icon danger"
+                    title="Confirm delete"
+                    onClick={() => void handleDelete(provider.id)}
+                  >
+                    ✓
+                  </button>
+                  <button
+                    type="button"
+                    className="pixel-icon"
+                    title="Cancel"
+                    onClick={() => setConfirmDeleteId(null)}
+                  >
+                    ✕
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="pixel-icon danger"
+                  onClick={() => setConfirmDeleteId(provider.id)}
+                >
+                  Del
+                </button>
+              )}
+            </div>
+            {provider.type === 'ollama' && expandedProviderId === provider.id ? (
+              <div className="ml-4 border-l border-white/10 pl-4">
+                <OllamaModelsPanel providerId={provider.id} onError={onError} />
+              </div>
+            ) : null}
           </div>
         ))}
       </div>

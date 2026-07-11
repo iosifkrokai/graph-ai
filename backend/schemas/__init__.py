@@ -19,6 +19,10 @@ from schemas.llm_provider import (
     LLMProviderModelResponse,
     LLMProviderResponse,
     LLMProviderUpdate,
+    OllamaCatalogEntry,
+    OllamaCatalogTag,
+    OllamaModelPullRequest,
+    OllamaModelPullResponse,
 )
 from schemas.node import (
     NodeCatalogDataSourceResponse,
@@ -48,9 +52,22 @@ from schemas.user import UserCreate, UserResponse
 from schemas.vector import (
     VectorCollectionResponse,
     VectorDocumentResponse,
+    VectorJobStatusResponse,
+    VectorUploadJobResponse,
     VectorUploadResponse,
 )
-from schemas.workflow import WorkflowCreate, WorkflowResponse, WorkflowUpdate
+from schemas.workflow import (
+    WorkflowCreate,
+    WorkflowExportResponse,
+    WorkflowGraphEdge,
+    WorkflowGraphNode,
+    WorkflowGraphTransfer,
+    WorkflowImportRequest,
+    WorkflowResponse,
+    WorkflowTemplateInstantiateRequest,
+    WorkflowTemplateResponse,
+    WorkflowUpdate,
+)
 from schemas.workflow_version import WorkflowVersionResponse
 
 __all__ = [
@@ -91,6 +108,10 @@ __all__ = [
     "NodeGraphSpec",
     "NodeResponse",
     "NodeUpdate",
+    "OllamaCatalogEntry",
+    "OllamaCatalogTag",
+    "OllamaModelPullRequest",
+    "OllamaModelPullResponse",
     "ServiceHealthResponse",
     "TelegramBotCreate",
     "TelegramBotResponse",
@@ -99,9 +120,18 @@ __all__ = [
     "UserResponse",
     "VectorCollectionResponse",
     "VectorDocumentResponse",
+    "VectorJobStatusResponse",
+    "VectorUploadJobResponse",
     "VectorUploadResponse",
     "WorkflowCreate",
+    "WorkflowExportResponse",
+    "WorkflowGraphEdge",
+    "WorkflowGraphNode",
+    "WorkflowGraphTransfer",
+    "WorkflowImportRequest",
     "WorkflowResponse",
+    "WorkflowTemplateInstantiateRequest",
+    "WorkflowTemplateResponse",
     "WorkflowUpdate",
     "WorkflowVersionResponse",
 ]

@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 
-import {
-  deleteVectorDocument,
-  getVectorDocuments,
-  uploadVectorDocument,
-} from '../lib/api'
-import type { ApiError, VectorDocument, VectorUploadResult } from '../lib/types'
+import { deleteVectorDocument, getVectorDocuments } from '../lib/api'
+import { queryKeys } from '../lib/queryKeys'
+import type { ApiError, VectorDocument } from '../lib/types'
 
 interface UseVectorDocumentsParams {
   collection: string
@@ -16,13 +14,8 @@ interface UseVectorDocumentsParams {
 interface UseVectorDocumentsResult {
   documents: VectorDocument[]
   loading: boolean
-  uploading: boolean
   refreshDocuments: () => Promise<void>
   removeDocument: (source: string) => Promise<boolean>
-  uploadDocument: (
-    file: File,
-    source?: string,
-  ) => Promise<VectorUploadResult | null>
 }
 
 export function useVectorDocuments({
@@ -30,78 +23,47 @@ export function useVectorDocuments({
   enabled = true,
   onError,
 }: UseVectorDocumentsParams): UseVectorDocumentsResult {
-  const [documents, setDocuments] = useState<VectorDocument[]>([])
-  const [loading, setLoading] = useState(false)
-  const [uploading, setUploading] = useState(false)
+  const queryClient = useQueryClient()
 
-  const reportError = useCallback(
-    (error: ApiError): void => {
-      if (onError) {
-        onError(error)
-      }
+  const query = useQuery({
+    queryKey: queryKeys.vectorDocuments(collection),
+    queryFn: () => getVectorDocuments(collection),
+    enabled,
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (source: string) => deleteVectorDocument(collection, source),
+    onSuccess: (_data, source) => {
+      queryClient.setQueryData(
+        queryKeys.vectorDocuments(collection),
+        (previous: VectorDocument[] | undefined) =>
+          previous?.filter((item) => item.source !== source) ?? [],
+      )
     },
-    [onError],
-  )
+  })
 
-  const refreshDocuments = useCallback(async (): Promise<void> => {
-    if (!enabled) {
-      setDocuments([])
-      return
-    }
-
-    setLoading(true)
+  async function removeDocument(source: string): Promise<boolean> {
     try {
-      const items = await getVectorDocuments(collection)
-      setDocuments(items)
+      await deleteMutation.mutateAsync(source)
+      return true
     } catch (error) {
-      reportError(error as ApiError)
-      setDocuments([])
-    } finally {
-      setLoading(false)
+      onError?.(error as ApiError)
+      return false
     }
-  }, [collection, enabled, reportError])
+  }
 
   useEffect(() => {
-    void refreshDocuments()
-  }, [refreshDocuments])
-
-  const removeDocument = useCallback(
-    async (source: string): Promise<boolean> => {
-      try {
-        await deleteVectorDocument(collection, source)
-        setDocuments((previous) => previous.filter((item) => item.source !== source))
-        return true
-      } catch (error) {
-        reportError(error as ApiError)
-        return false
-      }
-    },
-    [collection, reportError],
-  )
-
-  const uploadDocument = useCallback(
-    async (file: File, source?: string): Promise<VectorUploadResult | null> => {
-      setUploading(true)
-      try {
-        const result = await uploadVectorDocument(collection, file, source)
-        await refreshDocuments()
-        return result
-      } catch (error) {
-        reportError(error as ApiError)
-        return null
-      } finally {
-        setUploading(false)
-      }
-    },
-    [collection, refreshDocuments, reportError],
-  )
+    if (query.error) {
+      onError?.(query.error)
+    }
+  }, [query.error, onError])
 
   return {
-    documents,
-    loading,
-    uploading,
-    refreshDocuments,
+    documents: enabled ? (query.data ?? []) : [],
+    loading: enabled && query.isLoading,
+    refreshDocuments: async () => {
+      await query.refetch()
+    },
     removeDocument,
-    uploadDocument,
   }
 }

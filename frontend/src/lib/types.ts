@@ -4,6 +4,12 @@ export type ExecutionStatus = 'created' | 'running' | 'success' | 'failed'
 
 export const ACTIVE_STATUSES: ExecutionStatus[] = ['created', 'running']
 
+// What triggered an execution: the owner testing the flow, or real inbound
+// traffic (currently only Telegram). Lets the UI split "Test Runs" (a
+// sandbox for trying the flow before it's relied on) from "Activity Log"
+// (real usage) instead of merging them into one list.
+export type ExecutionSource = 'manual' | 'telegram'
+
 export interface RunInputPayload {
   value: string
 }
@@ -59,6 +65,7 @@ export interface Execution {
   workflow_id: number
   version_id: number | null
   status: ExecutionStatus
+  source: ExecutionSource
   input_data: RunInputPayload | null
   output_data: Record<string, unknown> | null
   error: string | null
@@ -67,11 +74,50 @@ export interface Execution {
   finished_at: string | null
 }
 
+export interface NodeMeta {
+  type: string
+  label: string
+  portType: PortType | null
+}
+
 export interface WorkflowVersion {
   id: number
   workflow_id: number
   version: number
   created_at: string
+}
+
+// Portable graph shape shared by export/import/duplicate/templates. Nodes
+// carry no ID — a transfer always creates fresh nodes; edges reference nodes
+// by their (0-based) position in `nodes` since node IDs don't exist yet at
+// import time and an export's IDs are meaningless to a different workflow.
+export interface WorkflowGraphNode {
+  type: NodeType
+  data: Record<string, unknown>
+  position_x: number
+  position_y: number
+}
+
+export interface WorkflowGraphEdge {
+  source_index: number
+  target_index: number
+  source_handle: string | null
+}
+
+export interface WorkflowGraphTransfer {
+  nodes: WorkflowGraphNode[]
+  edges: WorkflowGraphEdge[]
+}
+
+export interface WorkflowExport {
+  name: string
+  graph: WorkflowGraphTransfer
+}
+
+export interface WorkflowTemplate {
+  key: string
+  name: string
+  description: string
 }
 
 export interface TokenStreamEvent {
@@ -154,6 +200,7 @@ export interface NodeCatalogFieldUI {
   label: string
   placeholder: string | null
   help: string | null
+  step: number | null
 }
 
 export interface NodeCatalogFieldDataSource {
@@ -206,6 +253,30 @@ export interface LlmModel {
   name: string
 }
 
+export interface OllamaCatalogTag {
+  tag: string
+  size_gb: number
+  params: string
+}
+
+export interface OllamaCatalogEntry {
+  name: string
+  description: string
+  tags: OllamaCatalogTag[]
+}
+
+export interface OllamaPullJob {
+  job_id: string
+  model: string
+}
+
+export interface OllamaPullEvent {
+  status: string
+  percent?: number
+  done?: boolean
+  error?: string
+}
+
 export interface TelegramBot {
   id: number
   user_id: number
@@ -241,9 +312,15 @@ export interface VectorDocument {
   chunk_count: number
 }
 
-export interface VectorUploadResult {
+export interface VectorUploadJob {
+  job_id: string
   source: string
-  chunks_ingested: number
+}
+
+export interface VectorJobStatus {
+  status: 'processing' | 'ready' | 'failed'
+  chunks_ingested: number | null
+  detail: string | null
 }
 
 export interface ApiError {

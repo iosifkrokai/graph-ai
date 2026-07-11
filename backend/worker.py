@@ -6,21 +6,30 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from arq import cron
 
+from constants import DEFAULT_TIMEOUT
 from db.repositories import (
     ExecutionRepository,
     NodeRepository,
     TelegramBotRepository,
     WorkflowRepository,
 )
-from enums import ExecutionStatus, InputNodeFormat, NodeType, OutputNodeFormat
+from enums import (
+    ExecutionSource,
+    ExecutionStatus,
+    InputNodeFormat,
+    NodeType,
+    OutputNodeFormat,
+)
 from exceptions import BaseError, TelegramAPIError
 from integrations.telegram import get_updates, send_message
+from llm.ollama import OllamaClient
 from logging_config import configure_logging
+from rag.qdrant import get_qdrant_client
 from schemas import ExecutionCreate, ExecutionInputPayload
 from sessions import async_session
 from settings import redis_settings
-from streaming import publish_token, publish_token_reset
-from usecases import ExecutionUsecase
+from streaming import publish_pull_progress, publish_token, publish_token_reset
+from usecases import ExecutionTrigger, ExecutionUsecase, VectorUsecase
 from utils.encryption import decrypt
 
 if TYPE_CHECKING:
@@ -68,6 +77,92 @@ async def run_execution_task(ctx: dict[Any, Any], execution_id: int) -> None:
             token_reset_publisher=token_reset_publisher,
         )
         await _reply_via_telegram(session=session, execution_id=execution_id)
+
+
+async def ingest_document_task(
+    ctx: dict[Any, Any],
+    collection: str,
+    filename: str,
+    content: bytes,
+    source: str | None,
+) -> dict[str, Any]:
+    """Extract, chunk, embed, and store an uploaded document in the background.
+
+    Enqueued by the Vector Collections upload endpoint so the HTTP request can
+    return immediately. Reuses ``VectorUsecase.upload_document`` for all
+    validation (size, type, empty); any domain error it raises is recorded by
+    ARQ as a failed job and surfaced back through the job-status endpoint.
+
+    Args:
+        ctx: ARQ job context.
+        collection: Collection to store chunks in. Created if missing.
+        filename: The uploaded file's original name.
+        content: The file's raw bytes.
+        source: Document identifier to use instead of the filename, if given.
+
+    Returns:
+        The ingest result (``source`` and ``chunks_ingested``) as a dict, which
+        ARQ stores as the job result.
+
+    """
+    del ctx
+    logger.info("Ingesting %r into collection %r", filename, collection)
+    client = get_qdrant_client()
+    try:
+        result = await VectorUsecase(client).upload_document(
+            collection=collection,
+            filename=filename,
+            content=content,
+            source_override=source,
+        )
+    finally:
+        await client.close()
+    return result.model_dump()
+
+
+def _pull_frame(progress: dict[str, object]) -> dict[str, object]:
+    """Translate one Ollama pull progress object into a client-facing frame."""
+    frame: dict[str, object] = {
+        "status": str(progress.get("status", "")),
+        "done": False,
+    }
+    total = progress.get("total")
+    completed = progress.get("completed")
+    if isinstance(total, int | float) and total and isinstance(completed, int | float):
+        frame["percent"] = round(completed / total * 100)
+    return frame
+
+
+async def pull_ollama_model_task(
+    ctx: dict[Any, Any], base_url: str, model: str
+) -> None:
+    """Pull an Ollama model in the background, streaming progress over Redis.
+
+    Publishes a progress frame per line of Ollama's ``/api/pull`` stream and a
+    terminal ``done``/``error`` frame, which the SSE endpoint forwards to the
+    client. Keyed by this job's own id (``ctx["job_id"]``).
+
+    Args:
+        ctx: ARQ job context.
+        base_url: The Ollama server base URL.
+        model: The model name/tag to pull.
+
+    """
+    redis: Redis = ctx["redis"]
+    job_id = ctx["job_id"]
+    logger.info("Pulling Ollama model %r from %s", model, base_url)
+    client = OllamaClient(base_url=base_url, timeout=DEFAULT_TIMEOUT)
+    try:
+        async for progress in client.pull_model(model):
+            await publish_pull_progress(redis, job_id, _pull_frame(progress))
+    except BaseError as exc:
+        await publish_pull_progress(
+            redis, job_id, {"status": "error", "error": exc.message, "done": True}
+        )
+        raise
+    await publish_pull_progress(
+        redis, job_id, {"status": "success", "percent": 100, "done": True}
+    )
 
 
 async def _reply_via_telegram(session: "AsyncSession", execution_id: int) -> None:
@@ -307,7 +402,9 @@ async def _trigger_executions(
                     input_data=ExecutionInputPayload(value=text),
                 ),
                 enqueue=enqueue,
-                telegram_chat_id=chat_id,
+                trigger=ExecutionTrigger(
+                    source=ExecutionSource.TELEGRAM, telegram_chat_id=chat_id
+                ),
             )
         except BaseError:
             logger.exception(
@@ -382,10 +479,17 @@ async def startup(ctx: dict[Any, Any]) -> None:
 class WorkerSettings:
     """ARQ worker configuration."""
 
-    functions: ClassVar[list] = [run_execution_task]
+    functions: ClassVar[list] = [
+        run_execution_task,
+        ingest_document_task,
+        pull_ollama_model_task,
+    ]
     cron_jobs: ClassVar[list] = [
         cron(reap_stuck_executions, minute=_REAPER_MINUTES),
         cron(poll_telegram_updates, second=_TELEGRAM_POLL_SECONDS),
     ]
     redis_settings = redis_settings.arq
     on_startup = startup
+    # Model pulls can download several GB; give jobs an hour rather than the
+    # 5-minute default so a large pull isn't killed mid-download.
+    job_timeout = 3600

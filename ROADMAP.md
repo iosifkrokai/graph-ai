@@ -13,16 +13,19 @@ against the actual code as of this writing (not carried forward from stale notes
   LLMProvider, TelegramBot), JWT auth, encrypted secrets (Fernet), typed ports,
   workflow versioning, Telegram bot polling + reply integration.
 - **Frontend** — React 19 + React Flow graph editor, catalog-driven node inspector
-  and node-creation dialog, a unified Chat view (merged with what used to be a
-  separate Executions history: per-turn version pill, timestamps, and a per-node
+  and node-creation dialog, a Test Runs / Activity Log split (manual test runs vs.
+  real Telegram traffic, sharing per-turn version pill/timestamps/a per-node
   "Details" expansion via a generic `OutputRenderer`), a single Settings modal
-  (LLM Providers + Telegram Bots as tabs, on a shared `Modal` primitive).
+  (LLM Providers + Telegram Bots + Vector Collections as tabs, on a shared `Modal`
+  primitive), React Query for list+CRUD data fetching, workflow export/import/
+  duplicate + a global template library (Simple/RAG Chatbot, Telegram Echo Bot).
 - **Execution engine** (`backend/usecases/execution.py`) — 6 node types (`INPUT`,
   `LLM`, `WEB_SEARCH`, `TEMPLATE`, `HTTP_REQUEST`, `OUTPUT`), async execution with
   retries/backoff/reaper, wave-parallel scheduling, per-node result persistence
   (`node_executions`), SSE streaming with a polling fallback, workflow versioning
   with pinned reruns.
-- **Integrations** — multi-provider LLM (Ollama/OpenAI/Anthropic/OpenAI-compatible)
+- **Integrations** — multi-provider LLM (Ollama/OpenAI/Anthropic, with the OpenAI
+  entry's base URL freely overridable for any OpenAI-API-compatible endpoint)
   with token streaming; Telegram bots (per-user, encrypted token) that can trigger a
   workflow from an incoming message and receive the reply, including a manually
   pinned chat ID for non-Telegram-triggered runs.
@@ -62,7 +65,9 @@ against the actual code as of this writing (not carried forward from stale notes
 ## Phase 2 — Multi-provider LLM + secrets ✅ done
 
 - [x] Fernet-encrypted, write-only `LLMProvider.api_key`; never returned in responses.
-- [x] OpenAI / Anthropic / OpenAI-compatible clients alongside Ollama.
+- [x] OpenAI / Anthropic clients alongside Ollama. The OpenAI client also
+      serves any OpenAI-API-compatible endpoint — no separate provider type,
+      just override the OpenAI entry's base URL.
 - [x] Per-node generation params (`temperature`, `max_tokens`, `top_p`), opt-in via
       the `optional_number` widget.
 - [x] Token streaming provider → worker (Redis pub/sub) → SSE → frontend
@@ -488,8 +493,95 @@ Second pass (closed out everything remaining):
       positions, box-select vs. right-drag-pan, toolbar buttons, and a
       page reload after each step confirming state actually persisted
       server-side rather than being a client-side illusion.
-- [ ] React Query in place of hand-rolled `useState`/`useEffect` data fetching.
-- [ ] Workflow template library, JSON export/import, duplication.
+- [x] **React Query for simple list+CRUD data fetching** — `@tanstack/react-query`
+      (`lib/queryClient.ts`, `QueryClientProvider` wired in `main.tsx`;
+      `lib/queryKeys.ts` centralizes query keys). Migrated the 8 hooks that
+      were plain list+CRUD (`useNodeCatalog`, `useLlmProviders`,
+      `useProviderModels`, `useTelegramBots`, `useVectorCollections`,
+      `useVectorDocuments`, and the list-half of `useWorkflowState`/
+      `useActivityLog`) onto `useQuery`/`useMutation`, each mutation updating
+      the shared cache via `setQueryData` instead of each hook instance
+      holding its own local array. Real payoff: `NodeFieldsForm`'s provider/
+      bot/collection pickers and the corresponding Settings tabs now read
+      the *same* cached list — creating/deleting in Settings is instantly
+      visible in the node inspector instead of each hook fetching
+      independently. `useWorkflowState` split cleanly: the workflow list
+      moved to `useQuery`, `activeWorkflowId` (pure UI selection, not server
+      state) stayed a plain `useState`. `VectorCollectionSettings`'s
+      remount-via-`key` trick for refreshing a collection's document list
+      after upload was replaced with a targeted
+      `queryClient.invalidateQueries` (the remount hack silently stopped
+      refetching once RQ's `staleTime` made the remounted query resolve from
+      cache instead of the network). **Deliberately left untouched**:
+      `useExecutions.ts` (SSE token streaming + polling fallback merged into
+      one `useState`), `useOllamaPull.ts` (SSE), `useVectorUploadJobs.ts`
+      (hand-rolled job-status polling), and `useGraphState.ts`/
+      `useUndoRedo.ts` (a replay-based undo/redo command stack, not a cache)
+      — none of these are simple server-cache reads, so React Query would
+      add risk without a real caching win.
+- [x] **Workflow export/import, duplication, and a global template library**
+      — all four share one portable graph shape (`WorkflowGraphTransfer`:
+      nodes with no ID, edges referencing nodes by list *position* rather
+      than a database ID, since a transferred graph always creates fresh
+      nodes). New `WorkflowTransferUsecase` (`usecases/workflow_transfer.py`)
+      composes the existing `WorkflowUsecase`/`NodeUsecase`/`EdgeUsecase` to
+      build/rebuild a graph rather than duplicating their validation.
+      **Export** (`GET /workflows/{id}/export`) scrubs account-private
+      reference fields — `llm_provider_id`, `telegram_bot_id` — to `null`
+      (matched by `NodeFieldDataSourceKind` in the node catalog, not
+      hardcoded field names), since those IDs are meaningless outside the
+      exporting account; plain-string datasource fields (`model`,
+      `collection`) travel unscrubbed. **Import** (`POST /workflows/import`)
+      rebuilds a workflow from that shape, validating every edge index is
+      in-range *before* writing anything (creation isn't one DB transaction
+      — each node/edge create commits on its own — so this avoids leaving an
+      orphaned partial workflow behind for an error pure request data
+      already reveals). **Duplicate** (`POST /workflows/{id}/duplicate`)
+      reuses the same rebuild path but skips scrubbing (same account, so the
+      references stay valid) and names the copy `"{name} (copy)"`.
+      Required a real validation-layer change: `NodeUsecase._validate_node_field`
+      gained `allow_unset_references` — a *required* field whose datasource
+      kind is `LLM_PROVIDER`/`TELEGRAM_BOT`/`LLM_MODEL` (which depends on a
+      provider being chosen) is allowed to stay `None` only when rebuilding
+      a transferred graph, never through the public create/update-node API —
+      the user fills these back in via the node inspector's existing
+      "no longer exists" affordance, exactly as if the original provider had
+      been deleted. **Template library** (`templates/` package, mirroring
+      `nodes/registry.py`'s one-module-per-entry pattern; `GET
+      /workflow-templates` + `POST /workflow-templates/{key}/instantiate`,
+      reusing the import rebuild path) ships 3 presets: Simple Chatbot
+      (Input→LLM→Output), RAG Chatbot (Input→Vector Search→LLM→Output —
+      deliberately *no* Vector Ingest node, since ingesting on every chat
+      turn would re-embed the same documents; populate the "documents"
+      collection once via the existing Vector Collections upload UI first),
+      and Telegram Echo Bot (Input(telegram)→LLM→Output(telegram)). All
+      three ship with unset provider/bot references by design. Frontend:
+      `WorkflowSidebar.tsx` gained Export/Duplicate per-workflow buttons, an
+      Import file picker, and a "New From Template" button opening
+      `NewFromTemplateDialog.tsx` (a `Modal.tsx` list, reusing
+      `useWorkflowTemplates.ts`); `useWorkflowTransfer.ts` centralizes all
+      four mutations and pushes newly-created workflows into the React
+      Query workflow-list cache via `setQueryData` (same pattern Phase 7's
+      React Query migration established) instead of a manual refetch.
+      **Known gap / follow-up, not yet built:** every template today is a
+      strictly linear input→...→output chain because the execution engine
+      has no scheduling primitive for anything else — no loops (retry a
+      sub-chain N times, iterate over a list), no fan-out/fan-in beyond the
+      existing Condition node's single true/false branch, and no
+      trigger/cron scheduling independent of a chat message or Telegram
+      update. A template like "summarize each item in a list" or "poll an
+      API every 5 minutes" isn't expressible yet. Unlocking richer templates
+      needs engine work first, roughly in this order: (1) a loop/iteration
+      node type (bounded — max-iterations cap, mirroring the existing
+      `MAX_NODE_ATTEMPTS` retry cap — that fans a single upstream value out
+      over a list and fans results back in, analogous to how Condition
+      already diverges/reconverges the wave scheduler), (2) a scheduled
+      (cron-style) trigger source alongside the existing Telegram-poll
+      trigger, reusing `worker.py`'s existing ARQ cron registration pattern
+      (`poll_telegram_updates`) rather than inventing a second scheduling
+      mechanism, (3) then revisit the template catalog once those
+      primitives exist — a "daily digest" or "batch summarizer" preset only
+      makes sense after (1)/(2) land, not before.
 - [ ] Frontend tests (Vitest + Testing Library) — currently zero.
 - [ ] Multi-tenant quotas, audit log, cost observability (tokens/latency per run).
 - [ ] Metrics (Prometheus) + error tracking (Sentry).

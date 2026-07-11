@@ -122,7 +122,9 @@ DEFINITION = NodeDefinition(
                 placeholder="my-documents",
                 help="Qdrant collection to search, populated by a Vector Ingest node.",
             ),
-            datasource=NodeFieldDataSource(kind=NodeFieldDataSourceKind.VECTOR_COLLECTION),
+            datasource=NodeFieldDataSource(
+                kind=NodeFieldDataSourceKind.VECTOR_COLLECTION
+            ),
             default="",
         ),
         NodeFieldSpec(
@@ -136,6 +138,7 @@ DEFINITION = NodeDefinition(
                 widget=NodeFieldWidget.NUMBER,
                 label="Top K",
                 help="How many matching chunks to return.",
+                step=1,
             ),
             default=4,
         ),

@@ -1,9 +1,13 @@
-import { useId, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useRef, useState } from 'react'
 
 import { uploadVectorDocument } from '../lib/api'
+import { queryKeys } from '../lib/queryKeys'
 import type { ApiError } from '../lib/types'
 import { useVectorCollections } from '../hooks/useVectorCollections'
 import { useVectorDocuments } from '../hooks/useVectorDocuments'
+import { useVectorUploadJobs } from '../hooks/useVectorUploadJobs'
+import { VectorCollectionInput } from './VectorCollectionInput'
 
 interface VectorCollectionSettingsProps {
   onError: (err: ApiError) => void
@@ -80,16 +84,31 @@ function VectorDocumentList({
 }
 
 export function VectorCollectionSettings({ onError }: VectorCollectionSettingsProps) {
-  const uploadCollectionListId = useId()
+  const queryClient = useQueryClient()
   const [expandedCollection, setExpandedCollection] = useState<string | null>(null)
   const [confirmDeleteName, setConfirmDeleteName] = useState<string | null>(null)
   const [uploadCollection, setUploadCollection] = useState('')
   const [uploadSource, setUploadSource] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
-  const [uploading, setUploading] = useState(false)
-  const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0)
+  const [submitting, setSubmitting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const { collections, removeCollection, refreshCollections } = useVectorCollections({
+  const {
+    collections,
+    loading: collectionsLoading,
+    removeCollection,
+    refreshCollections,
+  } = useVectorCollections({
+    onError,
+  })
+
+  const { pending, track: trackUpload } = useVectorUploadJobs({
+    onReady: (upload) => {
+      void refreshCollections()
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.vectorDocuments(upload.collection),
+      })
+    },
     onError,
   })
 
@@ -109,28 +128,35 @@ export function VectorCollectionSettings({ onError }: VectorCollectionSettingsPr
     if (!uploadFile || !uploadCollection.trim()) {
       return
     }
-    setUploading(true)
+    const collection = uploadCollection.trim()
+    setSubmitting(true)
     try {
-      await uploadVectorDocument(
-        uploadCollection.trim(),
+      const job = await uploadVectorDocument(
+        collection,
         uploadFile,
         uploadSource.trim() || undefined,
       )
+      // Ingestion continues on the worker; track the job and clear the form so
+      // the user can queue the next file without waiting.
+      trackUpload({ jobId: job.job_id, source: job.source, collection })
       setUploadFile(null)
       setUploadSource('')
-      setDocumentsRefreshKey((key) => key + 1)
-      await refreshCollections()
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
     } catch (error) {
       onError(error as ApiError)
     } finally {
-      setUploading(false)
+      setSubmitting(false)
     }
   }
 
   return (
     <div>
       <div className="flex flex-col gap-3">
-        {collections.length === 0 ? (
+        {collectionsLoading ? (
+          <div className="text-xs text-[var(--muted)]">Loading collections...</div>
+        ) : collections.length === 0 ? (
           <div className="text-xs text-[var(--muted)]">No collections yet.</div>
         ) : null}
         {collections.map((collection) => (
@@ -179,7 +205,7 @@ export function VectorCollectionSettings({ onError }: VectorCollectionSettingsPr
             {expandedCollection === collection.name ? (
               <div className="ml-4 border-l border-white/10 pl-4">
                 <VectorDocumentList
-                  key={`${collection.name}-${documentsRefreshKey}`}
+                  key={collection.name}
                   collection={collection.name}
                   onError={onError}
                 />
@@ -196,22 +222,17 @@ export function VectorCollectionSettings({ onError }: VectorCollectionSettingsPr
         <div className="flex flex-col gap-3">
           <label className="pixel-label">
             Collection
-            <input
-              className="pixel-input"
-              list={uploadCollectionListId}
+            <VectorCollectionInput
+              collections={collections}
               value={uploadCollection}
-              onChange={(e) => setUploadCollection(e.target.value)}
+              onChange={setUploadCollection}
               placeholder="my-documents"
             />
-            <datalist id={uploadCollectionListId}>
-              {collections.map((collection) => (
-                <option key={collection.name} value={collection.name} />
-              ))}
-            </datalist>
           </label>
           <label className="pixel-label">
             File
             <input
+              ref={fileInputRef}
               className="pixel-input"
               type="file"
               accept=".pdf,.docx,.txt,.md"
@@ -230,11 +251,27 @@ export function VectorCollectionSettings({ onError }: VectorCollectionSettingsPr
           <button
             type="button"
             className="pixel-button small"
-            disabled={uploading || !uploadFile || !uploadCollection.trim()}
+            disabled={submitting || !uploadFile || !uploadCollection.trim()}
             onClick={() => void handleUpload()}
           >
-            {uploading ? 'Uploading...' : 'Upload'}
+            {submitting ? 'Queuing...' : 'Upload'}
           </button>
+
+          {pending.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {pending.map((item) => (
+                <div key={item.jobId} className="pixel-card">
+                  <div className="flex-1">
+                    <div className="text-sm">{item.source}</div>
+                    <div className="text-xs text-[var(--muted)]">
+                      {item.collection}
+                    </div>
+                  </div>
+                  <span className="pixel-processing">processing…</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

@@ -3,6 +3,7 @@ import type {
   EdgeCreatePayload,
   EdgeResponse,
   Execution,
+  ExecutionSource,
   ExecutionStreamEvent,
   LlmModel,
   LlmProvider,
@@ -12,6 +13,9 @@ import type {
   NodeExecutionResult,
   NodeResponse,
   NodeUpdatePayload,
+  OllamaCatalogEntry,
+  OllamaPullEvent,
+  OllamaPullJob,
   RunInputPayload,
   TelegramBot,
   TelegramBotCreatePayload,
@@ -19,8 +23,12 @@ import type {
   UserProfile,
   VectorCollection,
   VectorDocument,
-  VectorUploadResult,
+  VectorJobStatus,
+  VectorUploadJob,
   Workflow,
+  WorkflowExport,
+  WorkflowGraphTransfer,
+  WorkflowTemplate,
   WorkflowVersion,
 } from './types'
 
@@ -131,6 +139,40 @@ export async function getWorkflowVersions(
   return request<WorkflowVersion[]>(`/workflows/${workflowId}/versions`)
 }
 
+export async function exportWorkflow(workflowId: number): Promise<WorkflowExport> {
+  return request<WorkflowExport>(`/workflows/${workflowId}/export`)
+}
+
+export async function importWorkflow(
+  name: string,
+  graph: WorkflowGraphTransfer,
+): Promise<Workflow> {
+  return request<Workflow>('/workflows/import', {
+    method: 'POST',
+    body: JSON.stringify({ name, graph }),
+  })
+}
+
+export async function duplicateWorkflow(workflowId: number): Promise<Workflow> {
+  return request<Workflow>(`/workflows/${workflowId}/duplicate`, {
+    method: 'POST',
+  })
+}
+
+export async function getWorkflowTemplates(): Promise<WorkflowTemplate[]> {
+  return request<WorkflowTemplate[]>('/workflow-templates')
+}
+
+export async function instantiateWorkflowTemplate(
+  templateKey: string,
+  name?: string,
+): Promise<Workflow> {
+  return request<Workflow>(`/workflow-templates/${templateKey}/instantiate`, {
+    method: 'POST',
+    body: JSON.stringify(name ? { name } : {}),
+  })
+}
+
 export async function getNodes(
   workflowId: number,
 ): Promise<NodeResponse[]> {
@@ -185,8 +227,12 @@ export async function deleteEdge(edgeId: number): Promise<void> {
 
 export async function getExecutions(
   workflowId: number,
+  source?: ExecutionSource,
 ): Promise<Execution[]> {
-  return request<Execution[]>(`/executions?workflow_id=${workflowId}`)
+  const query = source
+    ? `workflow_id=${workflowId}&source=${source}`
+    : `workflow_id=${workflowId}`
+  return request<Execution[]>(`/executions?${query}`)
 }
 
 export async function getExecutionNodeResults(
@@ -282,6 +328,82 @@ export async function getLlmProviderModels(
   return request<LlmModel[]>(`/llm-providers/${providerId}/models`)
 }
 
+export async function getOllamaCatalog(): Promise<OllamaCatalogEntry[]> {
+  return request<OllamaCatalogEntry[]>('/llm-providers/model-catalog')
+}
+
+export async function pullOllamaModel(
+  providerId: number,
+  model: string,
+): Promise<OllamaPullJob> {
+  return request<OllamaPullJob>(`/llm-providers/${providerId}/models`, {
+    method: 'POST',
+    body: JSON.stringify({ model }),
+  })
+}
+
+export async function deleteProviderModel(
+  providerId: number,
+  model: string,
+): Promise<void> {
+  await request(
+    `/llm-providers/${providerId}/models?model=${encodeURIComponent(model)}`,
+    { method: 'DELETE' },
+  )
+}
+
+export async function streamOllamaPull(
+  providerId: number,
+  jobId: string,
+  onEvent: (event: OllamaPullEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const headers: Record<string, string> = {}
+  if (currentToken) {
+    headers['Authorization'] = `Bearer ${currentToken}`
+  }
+
+  const response = await fetch(
+    `${BASE}/llm-providers/${providerId}/models/pull/${encodeURIComponent(jobId)}/stream`,
+    { headers, signal },
+  )
+
+  if (!response.ok || !response.body) {
+    throw { message: 'Pull stream failed', status: response.status } as ApiError
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const frames = buffer.split('\n\n')
+    buffer = frames.pop() ?? ''
+
+    for (const frame of frames) {
+      const dataLine = frame.split('\n').find((line) => line.startsWith('data:'))
+      if (!dataLine) {
+        continue
+      }
+      const payload = dataLine.slice('data:'.length).trim()
+      if (!payload) {
+        continue
+      }
+      try {
+        onEvent(JSON.parse(payload) as OllamaPullEvent)
+      } catch {
+        // Skip a malformed frame rather than killing the whole stream.
+      }
+    }
+  }
+}
+
 export async function getTelegramBots(): Promise<TelegramBot[]> {
   return request<TelegramBot[]>('/telegram-bots')
 }
@@ -331,14 +453,22 @@ export async function uploadVectorDocument(
   collection: string,
   file: File,
   source?: string,
-): Promise<VectorUploadResult> {
+): Promise<VectorUploadJob> {
   const formData = new FormData()
   formData.append('file', file)
   if (source) {
     formData.append('source', source)
   }
-  return request<VectorUploadResult>(
+  return request<VectorUploadJob>(
     `/vector-collections/${encodeURIComponent(collection)}/documents`,
     { method: 'POST', body: formData },
+  )
+}
+
+export async function getVectorJobStatus(
+  jobId: string,
+): Promise<VectorJobStatus> {
+  return request<VectorJobStatus>(
+    `/vector-collections/jobs/${encodeURIComponent(jobId)}`,
   )
 }

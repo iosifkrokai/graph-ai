@@ -11,14 +11,14 @@ const ERROR_BANNER_TIMEOUT_MS = 8000
 interface AppShellProps {
   email: string
   workflowName: string
-  executionStatus: string | null
   error: string | null
   canUndo: boolean
   canRedo: boolean
   onUndo: () => void
   onRedo: () => void
   onAutoLayout: () => void
-  onOpenHistory: () => void
+  onOpenTestRuns: () => void
+  onOpenActivityLog: () => void
   onDismissError: () => void
   onLogout: () => void
   onDeleteAccount: () => void
@@ -29,14 +29,14 @@ interface AppShellProps {
 export function AppShell({
   email,
   workflowName,
-  executionStatus,
   error,
   canUndo,
   canRedo,
   onUndo,
   onRedo,
   onAutoLayout,
-  onOpenHistory,
+  onOpenTestRuns,
+  onOpenActivityLog,
   onDismissError,
   onLogout,
   onDeleteAccount,
@@ -63,50 +63,56 @@ export function AppShell({
           <div className="truncate text-xs text-[var(--muted)]">/ {workflowName}</div>
         </div>
         <div className="flex items-center gap-3">
-          {executionStatus ? (
-            <div className="pixel-pill">Status: {executionStatus}</div>
-          ) : null}
-          <button
-            type="button"
-            className="pixel-icon"
-            disabled={!canUndo}
-            title="Undo (Ctrl+Z)"
-            onClick={onUndo}
-          >
-            Undo
-          </button>
-          <button
-            type="button"
-            className="pixel-icon"
-            disabled={!canRedo}
-            title="Redo (Ctrl+Shift+Z)"
-            onClick={onRedo}
-          >
-            Redo
-          </button>
-          <button
-            type="button"
-            className="pixel-icon"
-            title="Auto-layout"
-            onClick={onAutoLayout}
-          >
-            Auto-layout
-          </button>
-          <button type="button" className="pixel-icon" onClick={onOpenHistory}>
-            History
-          </button>
-          <button
-            type="button"
-            className="pixel-icon"
-            onClick={() => setShowSettings(true)}
-          >
-            Settings
-          </button>
-          <UserMenu
-            email={email}
-            onLogout={onLogout}
-            onDeleteAccount={onDeleteAccount}
-          />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="pixel-icon"
+              disabled={!canUndo}
+              title="Undo (Ctrl+Z)"
+              onClick={onUndo}
+            >
+              Undo
+            </button>
+            <button
+              type="button"
+              className="pixel-icon"
+              disabled={!canRedo}
+              title="Redo (Ctrl+Shift+Z)"
+              onClick={onRedo}
+            >
+              Redo
+            </button>
+            <button
+              type="button"
+              className="pixel-icon"
+              title="Auto-layout"
+              onClick={onAutoLayout}
+            >
+              Auto-layout
+            </button>
+          </div>
+          <div className="flex items-center gap-2 border-l border-white/10 pl-3">
+            <button type="button" className="pixel-icon" onClick={onOpenTestRuns}>
+              Test Runs
+            </button>
+            <button type="button" className="pixel-icon" onClick={onOpenActivityLog}>
+              Activity Log
+            </button>
+          </div>
+          <div className="flex items-center gap-2 border-l border-white/10 pl-3">
+            <button
+              type="button"
+              className="pixel-icon"
+              onClick={() => setShowSettings(true)}
+            >
+              Settings
+            </button>
+            <UserMenu
+              email={email}
+              onLogout={onLogout}
+              onDeleteAccount={onDeleteAccount}
+            />
+          </div>
         </div>
       </header>
       {showSettings ? (

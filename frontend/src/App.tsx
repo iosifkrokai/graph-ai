@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { ActivityLog } from './components/ActivityLog'
 import { AppShell } from './components/AppShell'
 import { AuthScreen } from './components/AuthScreen'
 import { ChatPanel } from './components/ChatPanel'
 import { CreateNodeDialog } from './components/CreateNodeDialog'
 import { GraphCanvas } from './components/GraphCanvas'
 import { HistoryOverlay } from './components/HistoryOverlay'
+import type { HistoryTabId } from './components/HistoryOverlay'
 import { InspectorPanel } from './components/InspectorPanel'
+import { NewFromTemplateDialog } from './components/NewFromTemplateDialog'
 import { WorkflowSidebar } from './components/WorkflowSidebar'
+import { useActivityLog } from './hooks/useActivityLog'
 import { useAuthSession } from './hooks/useAuthSession'
 import { useExecutions } from './hooks/useExecutions'
 import { useGraphState } from './hooks/useGraphState'
 import { useNodeCatalog } from './hooks/useNodeCatalog'
 import { useWorkflowState } from './hooks/useWorkflowState'
+import { useWorkflowTransfer } from './hooks/useWorkflowTransfer'
 import type { ApiError, NodeType, PortType } from './lib/types'
 
 interface NodeCreateDraft {
@@ -26,8 +31,9 @@ interface NodeCreateDraft {
 export function App() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState<boolean>(false)
-  const [showHistory, setShowHistory] = useState<boolean>(false)
+  const [historyTab, setHistoryTab] = useState<HistoryTabId | null>(null)
   const [nodeCreateDraft, setNodeCreateDraft] = useState<NodeCreateDraft | null>(null)
+  const [showNewFromTemplate, setShowNewFromTemplate] = useState<boolean>(false)
 
   const {
     token,
@@ -55,6 +61,18 @@ export function App() {
     setLoading,
     setError,
     handleError,
+  })
+
+  const {
+    handleDuplicateWorkflow,
+    handleExportWorkflow,
+    handleImportWorkflow,
+    handleInstantiateTemplate,
+  } = useWorkflowTransfer({
+    setLoading,
+    setError,
+    handleError,
+    onWorkflowCreated: (created) => setActiveWorkflowId(created.id),
   })
 
   const {
@@ -107,6 +125,15 @@ export function App() {
     activeWorkflowId,
     setLoading,
     setError,
+    handleError,
+  })
+
+  const {
+    executions: activityLogExecutions,
+    loading: activityLogLoading,
+  } = useActivityLog({
+    token,
+    activeWorkflowId,
     handleError,
   })
 
@@ -288,14 +315,14 @@ export function App() {
       <AppShell
         email={email}
         workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
-        executionStatus={lastExecution?.status ?? null}
         error={error}
         canUndo={canUndo}
         canRedo={canRedo}
         onUndo={() => void undo()}
         onRedo={() => void redo()}
         onAutoLayout={() => void handleAutoLayout()}
-        onOpenHistory={() => setShowHistory(true)}
+        onOpenTestRuns={() => setHistoryTab('test-runs')}
+        onOpenActivityLog={() => setHistoryTab('activity-log')}
         onDismissError={() => setError(null)}
         onLogout={handleLogout}
         onDeleteAccount={handleDeleteAccount}
@@ -304,14 +331,20 @@ export function App() {
         <WorkflowSidebar
           workflows={workflows}
           activeWorkflowId={activeWorkflowId}
+          activeWorkflowStatus={lastExecution?.status ?? null}
           nodeCatalog={nodeCatalog}
           onSelectWorkflow={setActiveWorkflowId}
           onCreateWorkflow={handleCreateWorkflow}
           onRenameWorkflow={handleRenameWorkflow}
           onDeleteWorkflow={handleDeleteWorkflow}
+          onDuplicateWorkflow={(id) => void handleDuplicateWorkflow(id)}
+          onExportWorkflow={(id) => void handleExportWorkflow(id)}
+          onImportWorkflow={(file) => void handleImportWorkflow(file)}
+          onOpenNewFromTemplate={() => setShowNewFromTemplate(true)}
           onAddNode={handleAddNode}
         />
         <GraphCanvas
+          activeWorkflowId={activeWorkflowId}
           nodes={nodes}
           edges={edges}
           nodeCatalog={nodeCatalog}
@@ -332,9 +365,12 @@ export function App() {
         />
       </AppShell>
 
-      {showHistory ? (
-        <HistoryOverlay onClose={() => setShowHistory(false)}>
-          <div className="mx-auto flex h-full w-full max-w-3xl flex-col px-4 pt-4 pb-4">
+      {historyTab ? (
+        <HistoryOverlay
+          title={historyTab === 'test-runs' ? 'Test Runs' : 'Activity Log'}
+          onClose={() => setHistoryTab(null)}
+        >
+          {historyTab === 'test-runs' ? (
             <ChatPanel
               workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
               hasWorkflow={activeWorkflowId !== null}
@@ -348,7 +384,15 @@ export function App() {
               nodeMetaByNodeId={nodeMetaByNodeId}
               onRun={handleRun}
             />
-          </div>
+          ) : (
+            <ActivityLog
+              workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
+              hasWorkflow={activeWorkflowId !== null}
+              executions={activityLogExecutions}
+              loading={activityLogLoading}
+              nodeMetaByNodeId={nodeMetaByNodeId}
+            />
+          )}
         </HistoryOverlay>
       ) : null}
 
@@ -363,6 +407,16 @@ export function App() {
         onCancel={() => setNodeCreateDraft(null)}
         onConfirm={confirmCreateNode}
       />
+
+      {showNewFromTemplate ? (
+        <NewFromTemplateDialog
+          onCancel={() => setShowNewFromTemplate(false)}
+          onConfirm={async (templateKey) => {
+            await handleInstantiateTemplate(templateKey)
+            setShowNewFromTemplate(false)
+          }}
+        />
+      ) : null}
     </>
   )
 }
