@@ -161,15 +161,37 @@ export function App() {
     () => nodes.find((node) => Number(node.id) === activeParentNodeId) ?? null,
     [nodes, activeParentNodeId],
   )
+  // How many nodes live in each Loop's body — shown on the Loop node itself
+  // so it's obvious there's something to drill into (see CustomNodes.tsx).
+  const loopChildCounts = useMemo(() => {
+    const counts = new Map<number, number>()
+    for (const node of nodes) {
+      const parentNodeId = node.data?.parentNodeId as number | null | undefined
+      if (parentNodeId !== null && parentNodeId !== undefined) {
+        counts.set(parentNodeId, (counts.get(parentNodeId) ?? 0) + 1)
+      }
+    }
+    return counts
+  }, [nodes])
   // The canvas shows exactly one scope at a time (top level, or one Loop's
   // body) — filtered client-side since the full node/edge list for every
   // scope is already loaded.
   const canvasNodes = useMemo(
     () =>
-      nodes.filter(
-        (node) => (node.data?.parentNodeId as number | null | undefined) === activeParentNodeId,
-      ),
-    [nodes, activeParentNodeId],
+      nodes
+        .filter(
+          (node) =>
+            (node.data?.parentNodeId as number | null | undefined) === activeParentNodeId,
+        )
+        .map((node) =>
+          node.type === 'loop'
+            ? {
+                ...node,
+                data: { ...node.data, childCount: loopChildCounts.get(Number(node.id)) ?? 0 },
+              }
+            : node,
+        ),
+    [nodes, activeParentNodeId, loopChildCounts],
   )
   const canvasNodeIds = useMemo(
     () => new Set(canvasNodes.map((node) => node.id)),
