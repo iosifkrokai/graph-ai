@@ -1,12 +1,14 @@
-"""Daily digest template: Input(schedule) -> Web Search -> LLM -> Output.
+"""Daily digest template: Input(schedule) -> Web Search -> LLM -> Template -> Output.
 
 Fires once a day (default 9am UTC) with no incoming message, so the search
 query comes from the Input node's own `scheduled_value` (a scheduled Input
 node's fixed fired-with text) rather than `{{input}}` like a chat flow's
-prompt would. Edit that field for whatever topic should be digested. Output
-defaults to Telegram so the digest actually reaches someone; pin a chat ID
-(or provider/bot) after creating it, same as any node whose reference starts
-unset.
+prompt would. Edit that field for whatever topic should be digested. The
+Template node wraps the LLM's summary in a fixed header/footer before
+delivery — demonstrates using Template purely for message formatting rather
+than prompt-building. Output defaults to Telegram so the digest actually
+reaches someone; pin a chat ID (or provider/bot) after creating it, same as
+any node whose reference starts unset.
 """
 
 from enums import InputNodeFormat, NodeType, OutputNodeFormat
@@ -47,6 +49,15 @@ _GRAPH = WorkflowGraphTransfer(
             position_y=0.0,
         ),
         WorkflowGraphNode(
+            type=NodeType.TEMPLATE,
+            data={
+                "label": "Format Digest",
+                "template": "📰 *Daily Digest*\n\n{{input}}\n\n_Powered by Graph AI_",
+            },
+            position_x=840.0,
+            position_y=0.0,
+        ),
+        WorkflowGraphNode(
             type=NodeType.OUTPUT,
             data={
                 "label": "Deliver Digest",
@@ -54,7 +65,7 @@ _GRAPH = WorkflowGraphTransfer(
                 "telegram_bot_id": None,
                 "telegram_chat_id": None,
             },
-            position_x=840.0,
+            position_x=1120.0,
             position_y=0.0,
         ),
     ],
@@ -62,6 +73,7 @@ _GRAPH = WorkflowGraphTransfer(
         WorkflowGraphEdge(source_index=0, target_index=1, source_handle=None),
         WorkflowGraphEdge(source_index=1, target_index=2, source_handle=None),
         WorkflowGraphEdge(source_index=2, target_index=3, source_handle=None),
+        WorkflowGraphEdge(source_index=3, target_index=4, source_handle=None),
     ],
 )
 
