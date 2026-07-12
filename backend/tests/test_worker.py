@@ -365,7 +365,11 @@ class TestPollScheduledTriggers(BaseTestCase):
     """Tests for ``worker.poll_scheduled_triggers``."""
 
     async def _create_scheduled_workflow(
-        self, user_id: int, cron_expression: str, last_fired_at: datetime
+        self,
+        user_id: int,
+        cron_expression: str,
+        last_fired_at: datetime,
+        scheduled_value: str = "",
     ) -> int:
         """Create a minimal Input(schedule)->Output workflow with a schedule row.
 
@@ -384,6 +388,7 @@ class TestPollScheduledTriggers(BaseTestCase):
                 "label": "Input",
                 "format": "schedule",
                 "cron_expression": cron_expression,
+                "scheduled_value": scheduled_value,
             },
         )
         output_node = await NodeFactory.create_async(
@@ -443,6 +448,33 @@ class TestPollScheduledTriggers(BaseTestCase):
             tz=UTC
         ) - timedelta(minutes=1):
             pytest.fail("last_fired_at should have advanced to roughly now")
+
+    @pytest.mark.asyncio
+    async def test_fires_with_the_node_configured_scheduled_value(
+        self, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A due schedule's execution carries the Input node's fixed value."""
+        worker_sessionmaker = async_sessionmaker(
+            bind=test_engine, expire_on_commit=False
+        )
+        monkeypatch.setattr(worker_module, "async_session", worker_sessionmaker)
+
+        user = await UserFactory.create_async(session=self.session)
+        await self._create_scheduled_workflow(
+            user_id=user.id,
+            cron_expression="* * * * *",
+            last_fired_at=datetime.now(tz=UTC) - timedelta(minutes=2),
+            scheduled_value="latest AI news",
+        )
+
+        await worker_module.poll_scheduled_triggers({"redis": _FakeRedis()})
+
+        self.session.expire_all()
+        executions = await ExecutionRepository().get_all(session=self.session)
+        if len(executions) != 1:
+            pytest.fail(f"Expected exactly one execution, got {len(executions)}")
+        if executions[0].input_data != {"value": "latest AI news"}:
+            pytest.fail("Execution should carry the node's configured scheduled_value")
 
     @pytest.mark.asyncio
     async def test_ignores_a_schedule_not_yet_due(

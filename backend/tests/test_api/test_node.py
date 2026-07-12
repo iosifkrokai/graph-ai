@@ -277,27 +277,31 @@ class TestNodeSchedule(BaseTestCase):
         workflow = await WorkflowFactory.create_async(
             session=self.session, owner_id=user["id"]
         )
-        node = await NodeFactory.create_async(
-            session=self.session,
-            workflow_id=workflow.id,
-            type=NodeType.INPUT,
-            data={
-                "label": "Scheduled input",
-                "format": InputNodeFormat.SCHEDULE,
-                "cron_expression": "0 9 * * *",
+        create_response = await self.client.post(
+            url=self.url,
+            json={
+                "workflow_id": workflow.id,
+                "type": NodeType.INPUT,
+                "data": {
+                    "label": "Scheduled input",
+                    "format": InputNodeFormat.SCHEDULE,
+                    "cron_expression": "0 9 * * *",
+                },
             },
+            headers=headers,
         )
-        if await self._get_schedule(node_id=node.id) is None:
+        node_data = await self.assert_response_dict(response=create_response)
+        if await self._get_schedule(node_id=node_data["id"]) is None:
             pytest.fail("Expected a schedule row to exist before the switch")
 
         response = await self.client.patch(
-            url=f"{self.url}/{node.id}",
+            url=f"{self.url}/{node_data['id']}",
             json={"data": {"label": "Plain input", "format": InputNodeFormat.TXT}},
             headers=headers,
         )
         await self.assert_response_dict(response=response)
 
-        if await self._get_schedule(node_id=node.id) is not None:
+        if await self._get_schedule(node_id=node_data["id"]) is not None:
             pytest.fail("Expected the schedule row to be removed after format switch")
 
     @pytest.mark.asyncio
@@ -307,25 +311,29 @@ class TestNodeSchedule(BaseTestCase):
         workflow = await WorkflowFactory.create_async(
             session=self.session, owner_id=user["id"]
         )
-        node = await NodeFactory.create_async(
-            session=self.session,
-            workflow_id=workflow.id,
-            type=NodeType.INPUT,
-            data={
-                "label": "Scheduled input",
-                "format": InputNodeFormat.SCHEDULE,
-                "cron_expression": "0 9 * * *",
+        create_response = await self.client.post(
+            url=self.url,
+            json={
+                "workflow_id": workflow.id,
+                "type": NodeType.INPUT,
+                "data": {
+                    "label": "Scheduled input",
+                    "format": InputNodeFormat.SCHEDULE,
+                    "cron_expression": "0 9 * * *",
+                },
             },
+            headers=headers,
         )
-        if await self._get_schedule(node_id=node.id) is None:
+        node_data = await self.assert_response_dict(response=create_response)
+        if await self._get_schedule(node_id=node_data["id"]) is None:
             pytest.fail("Expected a schedule row to exist before deletion")
 
         response = await self.client.delete(
-            url=f"{self.url}/{node.id}", headers=headers
+            url=f"{self.url}/{node_data['id']}", headers=headers
         )
         await self.assert_response_ok(response=response)
 
-        if await self._get_schedule(node_id=node.id) is not None:
+        if await self._get_schedule(node_id=node_data["id"]) is not None:
             pytest.fail("Expected the schedule row to be gone after node deletion")
 
 

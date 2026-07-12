@@ -528,9 +528,9 @@ async def _trigger_scheduled_execution(
 ) -> None:
     """Create one execution for a due scheduled Input node.
 
-    A scheduled run has no incoming message, so it carries an empty input
-    value — same shape as a manual run, just triggered by the clock instead
-    of a user click.
+    A scheduled run has no incoming message, so it carries the node's fixed
+    ``scheduled_value`` text (empty if unset) as its input — same shape as a
+    manual run, just triggered by the clock instead of a user click.
 
     Args:
         session: Database session.
@@ -542,13 +542,17 @@ async def _trigger_scheduled_execution(
     if workflow is None:
         return
 
+    scheduled_value = node.data.get("scheduled_value")
+    if not isinstance(scheduled_value, str):
+        scheduled_value = ""
+
     try:
         await ExecutionUsecase().create_execution(
             session=session,
             user_id=workflow.owner_id,
             data=ExecutionCreate(
                 workflow_id=node.workflow_id,
-                input_data=ExecutionInputPayload(value=""),
+                input_data=ExecutionInputPayload(value=scheduled_value),
             ),
             enqueue=enqueue,
             trigger=ExecutionTrigger(source=ExecutionSource.SCHEDULE),

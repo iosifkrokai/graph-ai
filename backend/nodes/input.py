@@ -80,11 +80,27 @@ DEFINITION = NodeDefinition(
                 widget=NodeFieldWidget.TEXT,
                 label="Schedule (cron)",
                 placeholder="0 9 * * *",
+                help="Standard 5-field cron expression, evaluated in UTC.",
+            ),
+            visible_when=NodeFieldVisibility(
+                field="format", equals=InputNodeFormat.SCHEDULE.value
+            ),
+        ),
+        NodeFieldSpec(
+            name="scheduled_value",
+            required=False,
+            validators={},
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.TEXTAREA,
+                label="Value",
+                placeholder="latest AI news",
                 help=(
-                    "Standard 5-field cron expression, evaluated in UTC. "
-                    "Each fire creates a run with an empty input value."
+                    "A scheduled run has no incoming message, so this fixed "
+                    "text is used as the input value each time it fires. "
+                    "Leave blank to fire with an empty value."
                 ),
             ),
+            default="",
             visible_when=NodeFieldVisibility(
                 field="format", equals=InputNodeFormat.SCHEDULE.value
             ),

@@ -5,6 +5,7 @@ TemplateDefinition next to its graph and adding it to this list.
 """
 
 from exceptions import WorkflowTemplateNotFoundError
+from templates.daily_digest import DEFINITION as DAILY_DIGEST_DEFINITION
 from templates.definition import TemplateDefinition
 from templates.rag_chatbot import DEFINITION as RAG_CHATBOT_DEFINITION
 from templates.simple_chatbot import DEFINITION as SIMPLE_CHATBOT_DEFINITION
@@ -14,6 +15,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     SIMPLE_CHATBOT_DEFINITION,
     RAG_CHATBOT_DEFINITION,
     TELEGRAM_ECHO_BOT_DEFINITION,
+    DAILY_DIGEST_DEFINITION,
 )
 
 _DEFINITIONS_BY_KEY: dict[str, TemplateDefinition] = {
