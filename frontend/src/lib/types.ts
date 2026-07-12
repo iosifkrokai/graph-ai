@@ -5,10 +5,10 @@ export type ExecutionStatus = 'created' | 'running' | 'success' | 'failed'
 export const ACTIVE_STATUSES: ExecutionStatus[] = ['created', 'running']
 
 // What triggered an execution: the owner testing the flow, or real inbound
-// traffic (currently only Telegram). Lets the UI split "Test Runs" (a
-// sandbox for trying the flow before it's relied on) from "Activity Log"
-// (real usage) instead of merging them into one list.
-export type ExecutionSource = 'manual' | 'telegram'
+// traffic (Telegram messages or a cron schedule firing). Lets the UI split
+// "Test Runs" (a sandbox for trying the flow before it's relied on) from
+// "Activity Log" (real usage) instead of merging them into one list.
+export type ExecutionSource = 'manual' | 'telegram' | 'schedule'
 
 export interface RunInputPayload {
   value: string

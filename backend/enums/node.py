@@ -47,6 +47,7 @@ class InputNodeFormat(StrEnum):
 
     TXT = auto()
     TELEGRAM = auto()
+    SCHEDULE = auto()
 
 
 class OutputNodeFormat(StrEnum):

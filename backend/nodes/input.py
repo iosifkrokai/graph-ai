@@ -72,6 +72,23 @@ DEFINITION = NodeDefinition(
                 field="format", equals=InputNodeFormat.TELEGRAM.value
             ),
         ),
+        NodeFieldSpec(
+            name="cron_expression",
+            required=False,
+            validators={ValidatorType.CRON.value: True},
+            ui=NodeFieldUI(
+                widget=NodeFieldWidget.TEXT,
+                label="Schedule (cron)",
+                placeholder="0 9 * * *",
+                help=(
+                    "Standard 5-field cron expression, evaluated in UTC. "
+                    "Each fire creates a run with an empty input value."
+                ),
+            ),
+            visible_when=NodeFieldVisibility(
+                field="format", equals=InputNodeFormat.SCHEDULE.value
+            ),
+        ),
     ),
     build_handler=_build_handler,
 )

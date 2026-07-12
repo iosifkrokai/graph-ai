@@ -15,7 +15,7 @@ from db.repositories import (
     NodeExecutionRepository,
     NodeRepository,
 )
-from enums import ExecutionStatus, NodeType
+from enums import ExecutionSource, ExecutionStatus, NodeType
 from exceptions import ExecutionGraphValidationError, LLMProviderConnectionError
 from nodes import NodeExecutionResult
 from schemas import ExecutionResponse
@@ -876,6 +876,46 @@ class TestExecutionList(BaseTestCase):
         ids = {item.get("id") for item in data}
         if first.id not in ids or second.id not in ids:
             pytest.fail("Expected executions to appear in list")
+
+    @pytest.mark.asyncio
+    async def test_filters_by_multiple_sources(self) -> None:
+        """Repeated ?source= params match any of the given sources (IN, not =)."""
+        user, headers = await self.create_user_and_get_token()
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+
+        manual = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source=ExecutionSource.MANUAL,
+        )
+        telegram = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source=ExecutionSource.TELEGRAM,
+        )
+        schedule = await ExecutionFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source=ExecutionSource.SCHEDULE,
+        )
+
+        response = await self.client.get(
+            url=self.url,
+            params={
+                "workflow_id": workflow.id,
+                "source": ["telegram", "schedule"],
+            },
+            headers=headers,
+        )
+
+        data = await self.assert_response_list(response=response)
+        ids = {item.get("id") for item in data}
+        if manual.id in ids:
+            pytest.fail("Manual execution should not match a telegram+schedule filter")
+        if telegram.id not in ids or schedule.id not in ids:
+            pytest.fail("Telegram and schedule executions should both match")
 
 
 class TestNodeExecutionList(BaseTestCase):

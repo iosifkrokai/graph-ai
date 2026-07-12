@@ -157,7 +157,10 @@ class ExecutionListFilter:
     """Filter for listing a workflow's executions."""
 
     workflow_id: int
-    source: ExecutionSource | None = None
+    # None matches any source; a non-empty list restricts to those sources
+    # (e.g. Activity Log showing Telegram + schedule together, distinct from
+    # the owner's own manual test runs).
+    source: list[ExecutionSource] | None = None
 
 
 class ExecutionUsecase:
@@ -623,7 +626,7 @@ class ExecutionUsecase:
             raise WorkflowNotFoundError
 
         filters: dict[str, object] = {"workflow_id": list_filter.workflow_id}
-        if list_filter.source is not None:
+        if list_filter.source:
             filters["source"] = list_filter.source
 
         return [

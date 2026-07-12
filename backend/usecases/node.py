@@ -3,15 +3,17 @@
 import json
 from typing import Any
 
+from croniter import croniter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.repositories import (
     LLMProviderRepository,
     NodeRepository,
+    NodeScheduleRepository,
     TelegramBotRepository,
     WorkflowRepository,
 )
-from enums import NodeType, ValidatorType
+from enums import InputNodeFormat, NodeType, ValidatorType
 from exceptions import (
     LLMProviderNotFoundError,
     NodeDataValidationError,
@@ -58,6 +60,7 @@ class NodeUsecase:
         self._workflow_repository = WorkflowRepository()
         self._llm_provider_repository = LLMProviderRepository()
         self._telegram_bot_repository = TelegramBotRepository()
+        self._node_schedule_repository = NodeScheduleRepository()
         self._node_catalog = build_node_catalog()
 
     def _get_node_spec(self, node_type: NodeType) -> NodeCatalogItem:
@@ -115,33 +118,75 @@ class NodeUsecase:
 
         validators = field.validators
 
-        if ValidatorType.MIN_LENGTH.value in validators and (
-            not isinstance(value, str)
-            or len(value) < int(validators[ValidatorType.MIN_LENGTH.value])
-        ):
-            errors.append(
-                f"Field '{field.name}' must be a string with "
-                f"min length {validators[ValidatorType.MIN_LENGTH.value]}"
-            )
-
-        if ValidatorType.SELECT.value in validators:
-            allowed = validators[ValidatorType.SELECT.value]
-            if value not in allowed:
-                options = ", ".join(str(option) for option in allowed)
-                errors.append(f"Field '{field.name}' must be one of: {options}")
-
-        if ValidatorType.GE.value in validators:
-            threshold = float(validators[ValidatorType.GE.value])
-            if not isinstance(value, int | float) or value < threshold:
-                errors.append(f"Field '{field.name}' must be >= {threshold}")
-
-        if ValidatorType.LE.value in validators:
-            threshold = float(validators[ValidatorType.LE.value])
-            if not isinstance(value, int | float) or value > threshold:
-                errors.append(f"Field '{field.name}' must be <= {threshold}")
+        self._validate_min_length_field(field=field, value=value, errors=errors)
+        self._validate_select_field(field=field, value=value, errors=errors)
+        self._validate_ge_field(field=field, value=value, errors=errors)
+        self._validate_le_field(field=field, value=value, errors=errors)
 
         if ValidatorType.JSON.value in validators:
             self._validate_json_field(field=field, value=value, errors=errors)
+
+        if ValidatorType.CRON.value in validators:
+            self._validate_cron_field(field=field, value=value, errors=errors)
+
+    def _validate_min_length_field(
+        self,
+        *,
+        field: NodeFieldSpec,
+        value: object,
+        errors: list[str],
+    ) -> None:
+        """Append an error if a string value is shorter than the minimum."""
+        if ValidatorType.MIN_LENGTH.value not in field.validators:
+            return
+        min_length = field.validators[ValidatorType.MIN_LENGTH.value]
+        if not isinstance(value, str) or len(value) < int(min_length):
+            errors.append(
+                f"Field '{field.name}' must be a string with min length {min_length}"
+            )
+
+    def _validate_select_field(
+        self,
+        *,
+        field: NodeFieldSpec,
+        value: object,
+        errors: list[str],
+    ) -> None:
+        """Append an error if a value isn't one of the allowed options."""
+        if ValidatorType.SELECT.value not in field.validators:
+            return
+        allowed = field.validators[ValidatorType.SELECT.value]
+        if value not in allowed:
+            options = ", ".join(str(option) for option in allowed)
+            errors.append(f"Field '{field.name}' must be one of: {options}")
+
+    def _validate_ge_field(
+        self,
+        *,
+        field: NodeFieldSpec,
+        value: object,
+        errors: list[str],
+    ) -> None:
+        """Append an error if a numeric value is below the minimum."""
+        if ValidatorType.GE.value not in field.validators:
+            return
+        threshold = float(field.validators[ValidatorType.GE.value])
+        if not isinstance(value, int | float) or value < threshold:
+            errors.append(f"Field '{field.name}' must be >= {threshold}")
+
+    def _validate_le_field(
+        self,
+        *,
+        field: NodeFieldSpec,
+        value: object,
+        errors: list[str],
+    ) -> None:
+        """Append an error if a numeric value exceeds the maximum."""
+        if ValidatorType.LE.value not in field.validators:
+            return
+        threshold = float(field.validators[ValidatorType.LE.value])
+        if not isinstance(value, int | float) or value > threshold:
+            errors.append(f"Field '{field.name}' must be <= {threshold}")
 
     def _validate_json_field(
         self,
@@ -157,6 +202,19 @@ class NodeUsecase:
             json.loads(value)
         except json.JSONDecodeError:
             errors.append(f"Field '{field.name}' must be valid JSON")
+
+    def _validate_cron_field(
+        self,
+        *,
+        field: NodeFieldSpec,
+        value: object,
+        errors: list[str],
+    ) -> None:
+        """Append an error if a non-empty string value isn't a valid cron expression."""
+        if not isinstance(value, str) or not value.strip():
+            return
+        if not croniter.is_valid(value):
+            errors.append(f"Field '{field.name}' must be a valid cron expression")
 
     def _validate_node_data(
         self,
@@ -289,6 +347,54 @@ class NodeUsecase:
                 if not bot:
                     raise TelegramBotNotFoundError
 
+    async def _sync_node_schedule(
+        self,
+        session: AsyncSession,
+        node_id: int,
+        node_type: NodeType,
+        data: dict[str, Any],
+    ) -> None:
+        """Create/update/remove this node's schedule row to match its data.
+
+        A schedule row exists iff the node is an Input node currently
+        configured as `format=schedule` with a non-empty cron expression —
+        switching away from `schedule`, clearing the expression, or saving a
+        non-Input node all remove any existing row, so the poller never acts
+        on a stale schedule left over from a since-changed configuration.
+        """
+        if node_type is not NodeType.INPUT:
+            return
+
+        cron_expression = data.get("cron_expression")
+        is_scheduled = (
+            data.get("format") == InputNodeFormat.SCHEDULE.value
+            and isinstance(cron_expression, str)
+            and bool(cron_expression.strip())
+        )
+
+        existing = await self._node_schedule_repository.get_by(
+            session=session, node_id=node_id
+        )
+
+        if not is_scheduled:
+            if existing is not None:
+                await self._node_schedule_repository.delete_by(
+                    session=session, node_id=node_id
+                )
+            return
+
+        if existing is None:
+            await self._node_schedule_repository.create(
+                session=session,
+                data={"node_id": node_id, "cron_expression": cron_expression},
+            )
+        elif existing.cron_expression != cron_expression:
+            await self._node_schedule_repository.update_by(
+                session=session,
+                data={"cron_expression": cron_expression},
+                node_id=node_id,
+            )
+
     async def create_node(
         self,
         session: AsyncSession,
@@ -342,6 +448,12 @@ class NodeUsecase:
         node = await self._node_repository.create(
             session=session,
             data={**data.model_dump(), "data": validated_data},
+        )
+        await self._sync_node_schedule(
+            session=session,
+            node_id=node.id,
+            node_type=node.type,
+            data=validated_data,
         )
         await session.commit()
         return NodeResponse.model_validate(node)
@@ -471,6 +583,12 @@ class NodeUsecase:
         if not updated:
             raise NodeNotFoundError
 
+        await self._sync_node_schedule(
+            session=session,
+            node_id=node_id,
+            node_type=node.type,
+            data=validated_data,
+        )
         await session.commit()
         return NodeResponse.model_validate(updated)
 
