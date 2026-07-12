@@ -1272,6 +1272,313 @@ class TestExecutionCondition(BaseTestCase):
             pytest.fail("True branch should have been skipped")
 
 
+class TestExecutionLoop(BaseTestCase):
+    """Tests for the Loop node's recursive body execution."""
+
+    url = "/executions"
+
+    async def _build_list_loop_workflow(self, user: dict) -> dict[str, int]:
+        """Build Input -> Loop(list) -> Output; body maps LOOP_INPUT via Template."""
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        loop_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LOOP,
+            data={"label": "Loop", "mode": "list"},
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        loop_input = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LOOP_INPUT,
+            data={"label": "Loop Input"},
+            parent_node_id=loop_node.id,
+        )
+        transform = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.TEMPLATE,
+            data={"label": "Wrap", "template": "[{{input}}]"},
+            parent_node_id=loop_node.id,
+        )
+        loop_output = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LOOP_OUTPUT,
+            data={"label": "Loop Output"},
+            parent_node_id=loop_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=loop_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=loop_node.id,
+            target_node_id=output_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=loop_input.id,
+            target_node_id=transform.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=transform.id,
+            target_node_id=loop_output.id,
+        )
+        return {
+            "workflow_id": workflow.id,
+            "loop_node_id": loop_node.id,
+            "loop_input_id": loop_input.id,
+            "transform_id": transform.id,
+            "loop_output_id": loop_output.id,
+        }
+
+    async def _build_condition_loop_workflow(
+        self, user: dict, *, stop_value: str
+    ) -> dict[str, int]:
+        """Build Input -> Loop(condition) -> Output; body appends 'x' each pass."""
+        workflow = await WorkflowFactory.create_async(
+            session=self.session, owner_id=user["id"]
+        )
+        input_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.INPUT,
+            data={"label": "Input", "format": "txt"},
+        )
+        loop_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LOOP,
+            data={
+                "label": "Loop",
+                "mode": "condition",
+                "condition_type": "contains",
+                "value": stop_value,
+                "case_sensitive": "false",
+            },
+        )
+        output_node = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.OUTPUT,
+            data={"label": "Output", "format": "txt"},
+        )
+        loop_input = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LOOP_INPUT,
+            data={"label": "Loop Input"},
+            parent_node_id=loop_node.id,
+        )
+        transform = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.CODE_TRANSFORM,
+            data={"label": "Append x", "code": "output = input + 'x'"},
+            parent_node_id=loop_node.id,
+        )
+        loop_output = await NodeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            type=NodeType.LOOP_OUTPUT,
+            data={"label": "Loop Output"},
+            parent_node_id=loop_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=input_node.id,
+            target_node_id=loop_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=loop_node.id,
+            target_node_id=output_node.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=loop_input.id,
+            target_node_id=transform.id,
+        )
+        await EdgeFactory.create_async(
+            session=self.session,
+            workflow_id=workflow.id,
+            source_node_id=transform.id,
+            target_node_id=loop_output.id,
+        )
+        return {
+            "workflow_id": workflow.id,
+            "loop_node_id": loop_node.id,
+            "loop_input_id": loop_input.id,
+            "transform_id": transform.id,
+            "loop_output_id": loop_output.id,
+        }
+
+    async def _run_and_get_node_results(
+        self, headers: dict, workflow_id: int, input_value: str
+    ) -> tuple[dict, list[dict]]:
+        """Run the workflow and return the execution plus its node results."""
+        run_response = await self.client.post(
+            url=self.url,
+            json={"workflow_id": workflow_id, "input_data": {"value": input_value}},
+            headers=headers,
+        )
+        created = await self.assert_response_dict(response=run_response)
+        execution = await run_execution(self.session, created["id"])
+        nodes_response = await self.client.get(
+            url=f"/executions/{execution.id}/nodes", headers=headers
+        )
+        nodes = await self.assert_response_list(response=nodes_response)
+        return execution.model_dump(mode="json"), nodes
+
+    @pytest.mark.asyncio
+    async def test_list_mode_maps_over_array_and_collects_results(self) -> None:
+        """List mode runs the body once per element and aggregates into JSON."""
+        user, headers = await self.create_user_and_get_token()
+        ids = await self._build_list_loop_workflow(user)
+
+        execution, nodes = await self._run_and_get_node_results(
+            headers=headers,
+            workflow_id=ids["workflow_id"],
+            input_value='["a", "b", "c"]',
+        )
+
+        if execution["status"] != ExecutionStatus.SUCCESS:
+            pytest.fail(f"Execution should succeed, got {execution}")
+        if execution["output_data"]["value"] != '["[a]", "[b]", "[c]"]':
+            pytest.fail(
+                f"Expected mapped+collected JSON array, got "
+                f"{execution['output_data']['value']}"
+            )
+
+        transform_rows = sorted(
+            (item for item in nodes if item["node_id"] == ids["transform_id"]),
+            key=lambda item: item["iteration"],
+        )
+        if [item["iteration"] for item in transform_rows] != [0, 1, 2]:
+            pytest.fail(f"Expected iterations 0,1,2 for the body node, got {nodes}")
+        if [item["output"] for item in transform_rows] != ["[a]", "[b]", "[c]"]:
+            pytest.fail("Each iteration's transform output should match its element")
+
+        loop_row = next(
+            item for item in nodes if item["node_id"] == ids["loop_node_id"]
+        )
+        if loop_row["iteration"] is not None:
+            pytest.fail("The Loop node's own row should have iteration=None")
+
+    @pytest.mark.asyncio
+    async def test_list_mode_truncates_past_the_iteration_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A list longer than the cap runs only the first N elements."""
+        monkeypatch.setattr(
+            "usecases.execution.ExecutionUsecase._max_loop_iterations", 2
+        )
+        user, headers = await self.create_user_and_get_token()
+        ids = await self._build_list_loop_workflow(user)
+
+        execution, nodes = await self._run_and_get_node_results(
+            headers=headers,
+            workflow_id=ids["workflow_id"],
+            input_value='["a", "b", "c"]',
+        )
+
+        if execution["status"] != ExecutionStatus.SUCCESS:
+            pytest.fail(f"Execution should succeed, got {execution}")
+        output = execution["output_data"]["value"]
+        if '["[a]", "[b]"]' not in output or "truncated" not in output:
+            pytest.fail(f"Expected a truncated-with-marker output, got {output}")
+
+        transform_iterations = {
+            item["iteration"]
+            for item in nodes
+            if item["node_id"] == ids["transform_id"]
+        }
+        if transform_iterations != {0, 1}:
+            pytest.fail(f"Only the first 2 iterations should have run, got {nodes}")
+
+    @pytest.mark.asyncio
+    async def test_condition_mode_iterates_until_condition_matches(self) -> None:
+        """Condition mode re-runs the body until the stop condition matches."""
+        user, headers = await self.create_user_and_get_token()
+        ids = await self._build_condition_loop_workflow(user, stop_value="xxx")
+
+        execution, nodes = await self._run_and_get_node_results(
+            headers=headers, workflow_id=ids["workflow_id"], input_value=""
+        )
+
+        if execution["status"] != ExecutionStatus.SUCCESS:
+            pytest.fail(f"Execution should succeed, got {execution}")
+        if execution["output_data"]["value"] != "xxx":
+            pytest.fail(
+                f"Expected the loop to stop once 'xxx' appeared, got "
+                f"{execution['output_data']['value']}"
+            )
+
+        transform_iterations = sorted(
+            item["iteration"]
+            for item in nodes
+            if item["node_id"] == ids["transform_id"]
+        )
+        if transform_iterations != [0, 1, 2]:
+            pytest.fail(f"Expected exactly 3 iterations (0,1,2), got {nodes}")
+
+    @pytest.mark.asyncio
+    async def test_condition_mode_stops_at_cap_without_failing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A condition that never matches hard-stops at the cap, not a failure."""
+        monkeypatch.setattr(
+            "usecases.execution.ExecutionUsecase._max_loop_iterations", 3
+        )
+        user, headers = await self.create_user_and_get_token()
+        ids = await self._build_condition_loop_workflow(user, stop_value="never")
+
+        execution, nodes = await self._run_and_get_node_results(
+            headers=headers, workflow_id=ids["workflow_id"], input_value=""
+        )
+
+        if execution["status"] != ExecutionStatus.SUCCESS:
+            pytest.fail(
+                f"Hitting the iteration cap should not fail the execution, got "
+                f"{execution}"
+            )
+        output = execution["output_data"]["value"]
+        if "stopped" not in output or "iteration cap" not in output:
+            pytest.fail(f"Expected a stopped-by-cap marker in the output, got {output}")
+
+        transform_iterations = {
+            item["iteration"]
+            for item in nodes
+            if item["node_id"] == ids["transform_id"]
+        }
+        if transform_iterations != {0, 1, 2}:
+            pytest.fail(f"Expected exactly 3 capped iterations, got {nodes}")
+
+
 class TestExecutionRetries(BaseTestCase):
     """Tests for node-level retries and timeouts."""
 

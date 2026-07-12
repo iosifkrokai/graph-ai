@@ -583,7 +583,7 @@ Second pass (closed out everything remaining):
       primitives exist — a "daily digest" or "batch summarizer" preset only
       makes sense after (1)/(2) land, not before. Design for (1) and (2)
       fleshed out below.
-- [ ] **Scheduled (cron) trigger** — a new `InputNodeFormat.SCHEDULE`
+- [x] **Scheduled (cron) trigger** — a new `InputNodeFormat.SCHEDULE`
       alongside `TXT`/`TELEGRAM` (`enums/node.py`), reusing the existing ARQ
       cron pattern instead of inventing a second scheduling mechanism: a new
       `poll_scheduled_triggers` cron job in `worker.py` (ticking every
@@ -607,7 +607,7 @@ Second pass (closed out everything remaining):
       precedent as `TelegramBot.last_update_id`) vs. a dedicated
       `node_schedule_state` row, to avoid the worker mutating the same JSON
       blob the user edits from the inspector.
-- [ ] **Loop / iteration node** — one `NodeType.LOOP` node type supporting
+- [x] **Loop / iteration node** — one `NodeType.LOOP` node type supporting
       two modes (list-map and do-while-condition), with the loop body as a
       genuinely nested subgraph rather than an in-canvas cycle (the engine's
       `_topological_order` hard-rejects cycles today, and `outputs_by_node`/

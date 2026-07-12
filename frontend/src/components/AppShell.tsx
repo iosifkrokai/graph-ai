@@ -11,6 +11,10 @@ const ERROR_BANNER_TIMEOUT_MS = 8000
 interface AppShellProps {
   email: string
   workflowName: string
+  // Label of the Loop node whose body the canvas is currently drilled into,
+  // or null when viewing the top-level graph.
+  parentLoopLabel: string | null
+  onExitLoop: () => void
   error: string | null
   canUndo: boolean
   canRedo: boolean
@@ -29,6 +33,8 @@ interface AppShellProps {
 export function AppShell({
   email,
   workflowName,
+  parentLoopLabel,
+  onExitLoop,
   error,
   canUndo,
   canRedo,
@@ -60,7 +66,22 @@ export function AppShell({
           <div className="font-pixel text-sm uppercase text-[var(--accent)]">
             Graph AI
           </div>
-          <div className="truncate text-xs text-[var(--muted)]">/ {workflowName}</div>
+          <div className="flex min-w-0 items-center gap-2 truncate text-xs text-[var(--muted)]">
+            <span>/ {workflowName}</span>
+            {parentLoopLabel !== null ? (
+              <>
+                <span>/ Loop: {parentLoopLabel}</span>
+                <button
+                  type="button"
+                  className="pixel-icon"
+                  title="Back to workflow"
+                  onClick={onExitLoop}
+                >
+                  ← Back
+                </button>
+              </>
+            ) : null}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">

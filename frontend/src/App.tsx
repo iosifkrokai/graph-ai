@@ -18,7 +18,7 @@ import { useGraphState } from './hooks/useGraphState'
 import { useNodeCatalog } from './hooks/useNodeCatalog'
 import { useWorkflowState } from './hooks/useWorkflowState'
 import { useWorkflowTransfer } from './hooks/useWorkflowTransfer'
-import type { ApiError, NodeType, PortType } from './lib/types'
+import type { ApiError, NodeMeta, NodeType } from './lib/types'
 
 interface NodeCreateDraft {
   type: NodeType
@@ -34,6 +34,9 @@ export function App() {
   const [historyTab, setHistoryTab] = useState<HistoryTabId | null>(null)
   const [nodeCreateDraft, setNodeCreateDraft] = useState<NodeCreateDraft | null>(null)
   const [showNewFromTemplate, setShowNewFromTemplate] = useState<boolean>(false)
+  // Which Loop node's body the canvas is currently showing, or null for the
+  // top-level graph — set by double-clicking into a Loop node.
+  const [activeParentNodeId, setActiveParentNodeId] = useState<number | null>(null)
 
   const {
     token,
@@ -108,11 +111,27 @@ export function App() {
   } = useGraphState({
     token,
     activeWorkflowId,
+    activeParentNodeId,
     nodeCatalogByType,
     setLoading,
     setError,
     handleError,
   })
+
+  // Leaving a Loop body when the workflow changes (or its Loop node
+  // disappears from the freshly-loaded graph) falls back to the top level
+  // rather than showing an empty canvas for a scope that no longer exists.
+  useEffect(() => {
+    setActiveParentNodeId(null)
+  }, [activeWorkflowId])
+  useEffect(() => {
+    if (activeParentNodeId === null) {
+      return
+    }
+    if (!nodes.some((node) => Number(node.id) === activeParentNodeId)) {
+      setActiveParentNodeId(null)
+    }
+  }, [activeParentNodeId, nodes])
 
   const {
     executions,
@@ -138,6 +157,40 @@ export function App() {
   })
 
   const activeWorkflow = workflows.find((workflow) => workflow.id === activeWorkflowId) ?? null
+  const activeParentNode = useMemo(
+    () => nodes.find((node) => Number(node.id) === activeParentNodeId) ?? null,
+    [nodes, activeParentNodeId],
+  )
+  // The canvas shows exactly one scope at a time (top level, or one Loop's
+  // body) — filtered client-side since the full node/edge list for every
+  // scope is already loaded.
+  const canvasNodes = useMemo(
+    () =>
+      nodes.filter(
+        (node) => (node.data?.parentNodeId as number | null | undefined) === activeParentNodeId,
+      ),
+    [nodes, activeParentNodeId],
+  )
+  const canvasNodeIds = useMemo(
+    () => new Set(canvasNodes.map((node) => node.id)),
+    [canvasNodes],
+  )
+  const canvasEdges = useMemo(
+    () => edges.filter((edge) => canvasNodeIds.has(edge.source) && canvasNodeIds.has(edge.target)),
+    [edges, canvasNodeIds],
+  )
+  // Loop/loop_input/loop_output only make sense in one of the two scopes:
+  // a Loop node can't nest inside another Loop's body, and loop_input/
+  // loop_output only exist as a Loop body's entry/exit points.
+  const creatableNodeCatalog = useMemo(
+    () =>
+      nodeCatalog.filter((item) =>
+        activeParentNodeId === null
+          ? item.type !== 'loop_input' && item.type !== 'loop_output'
+          : item.type !== 'loop' && item.type !== 'input' && item.type !== 'output',
+      ),
+    [nodeCatalog, activeParentNodeId],
+  )
   const inputNodes = useMemo(
     () => nodes.filter((node) => node.type === 'input'),
     [nodes],
@@ -147,13 +200,14 @@ export function App() {
     [nodes],
   )
   const nodeMetaByNodeId = useMemo(() => {
-    const map = new Map<number, { type: string; label: string; portType: PortType | null }>()
+    const map = new Map<number, NodeMeta>()
     for (const node of nodes) {
       const catalogItem = nodeCatalogByType[node.type ?? '']
       map.set(Number(node.id), {
         type: node.type ?? 'unknown',
         label: catalogItem?.label ?? node.type ?? 'Unknown',
         portType: catalogItem?.graph.output_port ?? null,
+        parentNodeId: (node.data?.parentNodeId as number | null | undefined) ?? null,
       })
     }
     return map
@@ -255,11 +309,11 @@ export function App() {
   const handleAddNode = useCallback(
     (type: NodeType) => {
       requestCreateNode(type, {
-        x: 120 + nodes.length * 36,
-        y: 120 + nodes.length * 36,
+        x: 120 + canvasNodes.length * 36,
+        y: 120 + canvasNodes.length * 36,
       })
     },
-    [nodes.length, requestCreateNode],
+    [canvasNodes.length, requestCreateNode],
   )
 
   const handleDropNode = useCallback(
@@ -315,6 +369,10 @@ export function App() {
       <AppShell
         email={email}
         workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
+        parentLoopLabel={
+          activeParentNode ? String(activeParentNode.data?.label ?? 'Loop') : null
+        }
+        onExitLoop={() => setActiveParentNodeId(null)}
         error={error}
         canUndo={canUndo}
         canRedo={canRedo}
@@ -332,7 +390,7 @@ export function App() {
           workflows={workflows}
           activeWorkflowId={activeWorkflowId}
           activeWorkflowStatus={lastExecution?.status ?? null}
-          nodeCatalog={nodeCatalog}
+          nodeCatalog={creatableNodeCatalog}
           onSelectWorkflow={setActiveWorkflowId}
           onCreateWorkflow={handleCreateWorkflow}
           onRenameWorkflow={handleRenameWorkflow}
@@ -345,8 +403,9 @@ export function App() {
         />
         <GraphCanvas
           activeWorkflowId={activeWorkflowId}
-          nodes={nodes}
-          edges={edges}
+          activeParentNodeId={activeParentNodeId}
+          nodes={canvasNodes}
+          edges={canvasEdges}
           nodeCatalog={nodeCatalog}
           runDisabledReason={activeWorkflowId ? runDisabledReason : null}
           selectedCount={selectedNodeIds.length}
@@ -357,6 +416,7 @@ export function App() {
           onDeleteEdge={handleDeleteEdge}
           onDropNode={handleDropNode}
           onDeleteNode={handleDeleteNode}
+          onDrillIntoLoop={(nodeId) => setActiveParentNodeId(Number(nodeId))}
         />
         <InspectorPanel
           node={selectedNode}

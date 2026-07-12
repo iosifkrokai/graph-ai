@@ -395,6 +395,79 @@ class NodeUsecase:
                 node_id=node_id,
             )
 
+    async def _validate_parent_scope(
+        self,
+        session: AsyncSession,
+        workflow_id: int,
+        node_type: NodeType,
+        parent_node_id: int | None,
+    ) -> None:
+        """Validate a node's scope against its type and (if any) parent Loop.
+
+        Enforces three invariants, the only cross-node checks in node CRUD
+        (every other check is either single-node field validation or a
+        cross-resource reference lookup):
+        - `LOOP_INPUT`/`LOOP_OUTPUT` only make sense inside a loop body —
+          reject them at the top level (`parent_node_id is None`).
+        - `INPUT`/`OUTPUT` carry a top-level-only concept (Telegram/schedule
+          triggers, delivery formats) that's meaningless inside a loop body —
+          reject them when `parent_node_id` is set.
+        - Nested loops (a `LOOP` node whose `parent_node_id` is set at all)
+          are disallowed in v1 — the recursive runner's guardrails (iteration
+          caps, retry-from-zero) aren't designed for nested iteration counts
+          multiplying against each other.
+        Every other node type may live at either scope, but `parent_node_id`
+        (when set) must always reference a real `LOOP` node in this workflow.
+
+        Args:
+            session: Database session.
+            workflow_id: The workflow the node belongs to (already
+                ownership-checked by the caller).
+            node_type: The node type being created.
+            parent_node_id: The requested parent Loop node's id, or None.
+
+        Raises:
+            NodeDataValidationError: If any invariant above is violated, or
+                `parent_node_id` doesn't reference a Loop node in this
+                workflow.
+
+        """
+        if (
+            node_type in {NodeType.INPUT, NodeType.OUTPUT}
+            and parent_node_id is not None
+        ):
+            message = (
+                f"Node type '{node_type.value}' can only be created at the "
+                "top level, not inside a Loop node's body"
+            )
+            raise NodeDataValidationError(message=message)
+
+        if node_type is NodeType.LOOP and parent_node_id is not None:
+            message = (
+                "Nested loops are not supported: a Loop node's body cannot "
+                "contain another Loop node"
+            )
+            raise NodeDataValidationError(message=message)
+
+        if node_type in {NodeType.LOOP_INPUT, NodeType.LOOP_OUTPUT} and (
+            parent_node_id is None
+        ):
+            message = (
+                f"Node type '{node_type.value}' can only be created inside "
+                "a Loop node's body"
+            )
+            raise NodeDataValidationError(message=message)
+
+        if parent_node_id is None:
+            return
+
+        parent = await self._node_repository.get_by(
+            session=session, id=parent_node_id, workflow_id=workflow_id
+        )
+        if parent is None or parent.type is not NodeType.LOOP:
+            message = "parent_node_id must reference a Loop node in this workflow"
+            raise NodeDataValidationError(message=message)
+
     async def create_node(
         self,
         session: AsyncSession,
@@ -422,7 +495,7 @@ class NodeUsecase:
         Raises:
             WorkflowNotFoundError: If the workflow is not found.
             LLMProviderNotFoundError: If the LLM provider is not found.
-            NodeDataValidationError: If the node data is invalid.
+            NodeDataValidationError: If the node data, or its scope, is invalid.
 
         """
         workflow = await self._workflow_repository.get_by(
@@ -432,6 +505,13 @@ class NodeUsecase:
         )
         if not workflow:
             raise WorkflowNotFoundError
+
+        await self._validate_parent_scope(
+            session=session,
+            workflow_id=data.workflow_id,
+            node_type=data.type,
+            parent_node_id=data.parent_node_id,
+        )
 
         validated_data = self._validate_node_data(
             node_type=data.type,
