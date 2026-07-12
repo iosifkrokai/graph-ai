@@ -162,6 +162,9 @@ export function App() {
     () => nodes.find((node) => Number(node.id) === activeParentNodeId) ?? null,
     [nodes, activeParentNodeId],
   )
+  // The main Inspector only shows a top-level selection — a loop-body
+  // selection is shown by LoopBodyModal's own Inspector instead.
+  const mainSelectedNode = activeParentNodeId === null ? selectedNode : null
   // How many nodes live in each Loop's body — shown on the Loop node itself
   // so it's obvious there's something to drill into (see CustomNodes.tsx).
   const loopChildCounts = useMemo(() => {
@@ -424,6 +427,7 @@ export function App() {
       <AppShell
         email={email}
         workflowName={activeWorkflow?.name ?? 'Untitled workflow'}
+        showInspector={mainSelectedNode !== null}
         error={error}
         canUndo={canUndo}
         canRedo={canRedo}
@@ -472,11 +476,13 @@ export function App() {
             setActiveParentNodeId(Number(nodeId))
           }}
         />
-        <InspectorPanel
-          node={activeParentNodeId === null ? selectedNode : null}
-          nodeCatalog={nodeCatalog}
-          onSaveNode={handleUpdateNodeData}
-        />
+        {mainSelectedNode ? (
+          <InspectorPanel
+            node={mainSelectedNode}
+            nodeCatalog={nodeCatalog}
+            onSaveNode={handleUpdateNodeData}
+          />
+        ) : null}
       </AppShell>
 
       {activeParentNodeId !== null && activeParentNode ? (

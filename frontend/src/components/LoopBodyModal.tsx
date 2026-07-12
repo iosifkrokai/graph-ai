@@ -119,7 +119,11 @@ export function LoopBodyModal({
           </button>
         </div>
       </div>
-      <div className="grid flex-1 grid-cols-[280px_1fr_320px] gap-3 overflow-hidden">
+      <div
+        className={`grid flex-1 gap-3 overflow-hidden ${
+          selectedNode ? 'grid-cols-[280px_1fr_320px]' : 'grid-cols-[280px_1fr]'
+        }`}
+      >
         <aside className="pixel-panel pixel-scroll overflow-y-auto">
           <NodePalette nodeCatalog={creatableNodeCatalog} onAddNode={onAddNode} />
         </aside>
@@ -140,7 +144,9 @@ export function LoopBodyModal({
           onDeleteNode={onDeleteNode}
           onDrillIntoLoop={() => {}}
         />
-        <InspectorPanel node={selectedNode} nodeCatalog={nodeCatalog} onSaveNode={onSaveNode} />
+        {selectedNode ? (
+          <InspectorPanel node={selectedNode} nodeCatalog={nodeCatalog} onSaveNode={onSaveNode} />
+        ) : null}
       </div>
     </div>
   )
